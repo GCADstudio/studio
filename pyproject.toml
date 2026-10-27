@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gcad-studio"
+dynamic = ["version"]
+description = "Language-agnostic, code-first CAD studio: define a modelling language by its grammar, render it, export it."
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "GCADstudio contributors" }]
+keywords = ["cad", "csg", "openscad", "grammar", "stl", "gltf", "step"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Manufacturing",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "manifold3d>=3.2",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "trimesh>=4",
+]
+
+[project.scripts]
+gcad = "gcad.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/GCADstudio/studio"
+Discussion = "https://github.com/openscad/openscad/issues/2299"
+
+[tool.hatch.version]
+path = "src/gcad/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gcad"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/gcad"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["manifold3d", "manifold3d.*"]
+ignore_missing_imports = true

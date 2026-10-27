@@ -30,3 +30,20 @@
 *.exe
 *.out
 *.app
+
+# Wavefront OBJ is a GCAD export format; keep reference files under tests/
+!tests/**/*.obj
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local export output
+/out/
