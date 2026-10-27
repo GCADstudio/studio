@@ -20,7 +20,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from gcad.core.sexpr import Expr, read
+from gcad.core.sexpr import Expr, SList, Sym, read
 from gcad.diagnostics import GcadError
 from gcad.kernels.grammar import GrammarKernel, load_grammar_kernel
 
@@ -72,7 +72,24 @@ class Kernel:
         }
         if self.is_grammar:
             info["highlight"] = self.grammar().describe()
+        info["builtins"] = self.builtin_names()
         return info
+
+    def builtin_names(self) -> list[str]:
+        """Names a program can call without defining them: GCore built-ins and the prelude's
+        definitions (for example OpenSCAD's `cube`). Editors highlight them as functions."""
+        from gcad.core.builtins import global_env
+        from gcad.core.evaluator import Builtin
+
+        names = {n for n, v in global_env().vars.items() if isinstance(v, Builtin)}
+        for form in self.prelude():
+            if isinstance(form, SList) and len(form.items) > 1 and isinstance(form.items[0], Sym):
+                target = form.items[1]
+                if isinstance(target, SList) and target.items:
+                    target = target.items[0]
+                if isinstance(target, Sym) and form.items[0].name in ("define", "module"):
+                    names.add(target.name)
+        return sorted(n for n in names if n[:1].isalpha() or n[:1] == "_")
 
     def examples(self) -> list[Path]:
         folder = self.path / "examples"

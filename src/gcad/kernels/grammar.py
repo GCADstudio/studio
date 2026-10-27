@@ -312,23 +312,34 @@ class GrammarKernel:
             report.warnings.append(f"[tokens] {name} is not a terminal of the grammar")
         return report
 
-    def describe(self) -> dict[str, list[str]]:
-        """Highlighting classes derived from the grammar (FR-K5)."""
+    def describe(self) -> dict[str, object]:
+        """Highlighting classes derived from the grammar (FR-K5). `patterns` gives each
+        named terminal's regular expression by class, so an editor can tokenize the language
+        without knowing it."""
         keywords: set[str] = set()
         operators: set[str] = set()
         tokens: dict[str, str] = {}
+        patterns: dict[str, list[str]] = {}
         ignored = set(self.lark.ignore_tokens)
         for term in self.lark.terminals:
             if isinstance(term.pattern, PatternStr) and term.name not in ignored:
                 # Lark names some literals __ANON_n; they are still keywords or operators.
                 value = term.pattern.value
                 (keywords if re.fullmatch(r"[A-Za-z_]\w*", value) else operators).add(value)
-            elif term.name.startswith("__"):
                 continue
-            elif term.name in ignored:
-                tokens[term.name] = "comment"
-            else:
-                tokens[term.name] = self.token_kinds.get(term.name) or guess_token_kind(term.name)
+            if term.name.startswith("__") and term.name not in ignored:
+                continue
+            kind = (
+                "comment"
+                if term.name in ignored
+                else self.token_kinds.get(term.name) or guess_token_kind(term.name)
+            )
+            if not term.name.startswith("__"):
+                tokens[term.name] = kind
+            if kind != "comment" or not re.fullmatch(
+                r"\\s\+|\(\?:\\s\)\+|\[[^\]]*\]\+", term.pattern.value
+            ):
+                patterns.setdefault(kind, []).append(term.pattern.value)
         by_kind: dict[str, list[str]] = {}
         for name, kind in tokens.items():
             by_kind.setdefault(kind, []).append(name)
@@ -336,6 +347,7 @@ class GrammarKernel:
             "keywords": sorted(keywords),
             "operators": sorted(operators),
             **{f"{kind}_terminals": sorted(v) for kind, v in sorted(by_kind.items())},
+            "patterns": {kind: sorted(p) for kind, p in sorted(patterns.items())},
         }
 
 

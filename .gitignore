@@ -47,3 +47,6 @@ dist/
 
 # Local export output
 /out/
+
+# Front-end vendoring tool (its output in src/gcad/web/vendor is committed)
+/tools/vendor-web/node_modules/

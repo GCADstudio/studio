@@ -52,13 +52,8 @@ jobs:
           echo "set man-db/auto-update false" | sudo debconf-set-selections
           sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libopengl0 libglu1-mesa ghostscript
-      - name: LibreOffice, the independent CGM and DXF reader (one job)
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
-        timeout-minutes: 15
-        run: |
-          sudo apt-get install -y --no-install-recommends libreoffice-draw libreoffice-impress
-          echo "GCAD_REQUIRE_LIBREOFFICE=1" >> "$GITHUB_ENV"
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            libopengl0 libglu1-mesa ghostscript
       - run: python -m pip install -e ".[dev]"
       - name: Record platform
         run: python -c "import platform, sys; print(platform.platform(), platform.machine(), sys.version)"
@@ -94,3 +89,47 @@ jobs:
             grep "no build for this platform" err.txt
           fi
           ls -l out
+
+  # The studio in a real headless browser (SPEC NFR-9). It uses the Chrome the runner image
+  # already has, and SwiftShader, Chrome's CPU WebGL: the viewer must work without a GPU.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev]" playwright
+      - run: pytest -q -rs tests/test_ui.py
+        env:
+          GCAD_REQUIRE_UI: "1"
+          GCAD_UI_ARTIFACTS: ui-screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-screenshots
+          path: ui-screenshots
+          if-no-files-found: ignore
+
+  # LibreOffice is the only independent CGM reader; it is large, so it gets a job of its own
+  # where a slow package mirror cannot hold up the main matrix.
+  libreoffice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install LibreOffice Draw and Impress
+        run: |
+          echo "set man-db/auto-update false" | sudo debconf-set-selections
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            libreoffice-draw libreoffice-impress
+      - run: python -m pip install -e ".[dev]"
+      - run: pytest -q -rs tests/test_2d_formats.py -k libreoffice
+        env:
+          GCAD_REQUIRE_LIBREOFFICE: "1"

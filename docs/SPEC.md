@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M4 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M5 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -46,7 +46,7 @@ Each design driver below comes from a specific comment in [openscad/openscad#229
 
 ```
  Browser UI (editor | viewer | console)          gcad CLI (headless)
-          │  JSON-RPC 2.0 over WebSocket              │ in-process
+          │  JSON-RPC 2.0 over HTTP (§7.1)            │ in-process
           ▼                                           ▼
  ┌───────────────────────── gcad server / library (Python) ─────────────────────────┐
  │ Kernel registry ─► Grammar kernel: Lark parse ─► rewrite rules ─┐                │
@@ -162,9 +162,9 @@ FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stab
 | FR-U4 | M | Viewer: orbit, pan, zoom, fit, standard views, axes, grid, wireframe toggle, bounding-box dimensions in document units. |
 | FR-U5 | M | Diagnostics appear inline in the editor at their source span and in the console. |
 | FR-U6 | M | Export dialog listing every format of §8, greyed with a reason when the active back-end cannot produce it. |
-| FR-U7 | S | Click geometry in the viewer → highlight the source span that created it, and the reverse. |
-| FR-U8 | S | Sliders on numeric literals (D9): scrubbing rewrites the literal in the source and re-evaluates. |
-| FR-U9 | S | 2D view for 2D models and sections, with true-scale rulers. |
+| FR-U7 | S | Click geometry in the viewer → highlight the source span that created it, and the reverse. As built in M5: click → source (the face lights up, the editor selects the call that made it); source → geometry not yet. |
+| FR-U8 | S | Sliders on numeric literals (D9): scrubbing rewrites the literal in the source and re-evaluates. As built in M5. |
+| FR-U9 | S | 2D view for 2D models and sections, with true-scale rulers. As built in M5: a top view with a millimetre grid and the extents in the stats card; no rulers yet. |
 | FR-U10 | C | Notebook documents (`.gcadnb`, JSON like `.ipynb`): cells, each bound to a kernel, sharing one scene; later a Jupyter kernel wrapper. |
 | FR-CLI1 | M | `gcad kernels`, `gcad eval <file> [--kernel k] [--dump gcore|graph]`, `gcad export <file> -f <fmt> -o <out> [--backend B|M] [--tol …]`, `gcad kernel check <dir>`, `gcad serve`. |
 | FR-CLI2 | M | The CLI needs no display, GPU or browser; it is the reference path for tests and automation. Exit code 0 on success, non-zero on any error diagnostic. |
@@ -174,6 +174,8 @@ FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stab
 ### 7.1 UI ↔ server (M)
 
 JSON-RPC 2.0 over WebSocket. Methods: `kernel/list`, `kernel/describe` (extensions, highlight tokens), `document/evaluate {kernel, source, params} → {diagnostics, graph, preview}` where `preview` is a URL to a binary glTF with per-node ids, `export/formats`, `export/run {format, options} → file`. Notifications: `log`, `progress`. Method names follow LSP conventions so a later LSP bridge for VS Code and other editors is a thin layer (D4).
+
+As built in M5: JSON-RPC 2.0 over HTTP POST `/rpc` instead of a WebSocket, because no call needs server-pushed notifications yet and the server then needs only the Python standard library. The session token travels in the URL fragment (never sent to the server) and comes back in an `X-GCAD-Token` header; the `Host` header must be the server's own address (no DNS rebinding). `document/evaluate` returns the mesh as base64 arrays (positions, indices, per-triangle group) with each group's colour and source spans, which is what click-to-source needs; `file/list`, `file/open` and `file/save` work inside the folder `gcad serve` was started in, with bundled examples read-only. A WebSocket can be added when `log`/`progress` notifications are needed.
 
 ### 7.2 Server ↔ process kernel (S)
 

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GCAD Studio</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script>
+    // Apply the saved or system theme before first paint.
+    try {
+      const saved = localStorage.getItem("gcad.theme");
+      const dark = saved ? saved === "dark" : !matchMedia("(prefers-color-scheme: light)").matches;
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    } catch (e) {}
+  </script>
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand" title="GCAD Studio">
+        <img src="favicon.svg" alt="" width="22" height="22">
+        <span class="brand-name">GCAD <span>Studio</span></span>
+      </div>
+      <button class="file-button" id="file-button" title="Open a file (Ctrl+O)">
+        <span class="icon" data-icon="file"></span>
+        <span class="file-name" id="file-name">untitled</span>
+        <span class="dirty" id="dirty" hidden></span>
+        <span class="read-only" id="read-only" hidden>example</span>
+        <span class="chevron" data-icon="chevron"></span>
+      </button>
+      <label class="kernel-select" title="Modelling language">
+        <span class="icon" data-icon="code"></span>
+        <select id="kernel" aria-label="Modelling language"></select>
+      </label>
+      <div class="spacer"></div>
+      <div class="status" id="status" data-state="idle" role="status">
+        <span class="status-dot"></span><span id="status-text">Starting</span>
+      </div>
+      <label class="switch" title="Run as you type">
+        <input type="checkbox" id="live" checked>
+        <span class="track"><span class="thumb"></span></span>
+        <span class="switch-label">Live</span>
+      </label>
+      <button class="btn" id="run-button" title="Run (F5)"><span class="icon" data-icon="play"></span>Run</button>
+      <button class="btn primary" id="export-button" title="Export (Ctrl+E)"><span class="icon" data-icon="download"></span>Export</button>
+      <button class="icon-btn" id="theme-button" title="Light or dark theme" aria-label="Toggle theme"><span class="icon" data-icon="theme"></span></button>
+    </header>
+
+    <main class="workspace" id="workspace">
+      <section class="pane editor-pane" aria-label="Source">
+        <div id="editor"></div>
+      </section>
+      <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" tabindex="0"></div>
+      <section class="pane viewer-pane" aria-label="Model">
+        <div id="viewer"></div>
+        <div class="viewer-toolbar glass" id="viewer-toolbar">
+          <button class="icon-btn" data-action="fit" title="Fit (F)"><span class="icon" data-icon="fit"></span></button>
+          <span class="sep"></span>
+          <button class="icon-btn" data-view="iso" title="Isometric"><span class="icon" data-icon="cube"></span></button>
+          <button class="icon-btn" data-view="top" title="Top"><span class="view-label">T</span></button>
+          <button class="icon-btn" data-view="front" title="Front"><span class="view-label">F</span></button>
+          <button class="icon-btn" data-view="right" title="Right"><span class="view-label">R</span></button>
+          <span class="sep"></span>
+          <button class="icon-btn toggle active" data-toggle="edges" title="Edges"><span class="icon" data-icon="edges"></span></button>
+          <button class="icon-btn toggle" data-toggle="wireframe" title="Wireframe"><span class="icon" data-icon="wire"></span></button>
+          <button class="icon-btn toggle active" data-toggle="grid" title="Grid"><span class="icon" data-icon="grid"></span></button>
+        </div>
+        <div class="model-card glass" id="model-card" hidden></div>
+        <div class="pick-card glass" id="pick-card" hidden></div>
+        <div class="empty-state" id="empty-state">
+          <img src="favicon.svg" alt="" width="44" height="44">
+          <p>Your model appears here.</p>
+          <p class="hint">Write some geometry on the left, for example <code>cube(10);</code></p>
+        </div>
+      </section>
+    </main>
+
+    <section class="console" id="console">
+      <div class="console-resize" id="console-resize" role="separator" aria-orientation="horizontal"></div>
+      <div class="console-tabs" role="tablist">
+        <button class="tab active" data-tab="problems" role="tab">Problems <span class="badge" id="problem-count">0</span></button>
+        <button class="tab" data-tab="output" role="tab">Output</button>
+        <button class="tab" data-tab="gcore" role="tab" title="What the kernel rewrote your source into">GCore</button>
+        <div class="spacer"></div>
+        <span class="console-meta" id="console-meta"></span>
+        <button class="icon-btn small" id="console-toggle" title="Show or hide the console"><span class="icon" data-icon="chevron-down"></span></button>
+      </div>
+      <div class="console-body">
+        <ul class="problems" data-panel="problems"></ul>
+        <div class="output" data-panel="output" hidden></div>
+        <pre class="gcore" data-panel="gcore" hidden></pre>
+      </div>
+    </section>
+  </div>
+
+  <div class="overlay" id="palette" hidden>
+    <div class="dialog palette" role="dialog" aria-label="Open">
+      <div class="palette-search">
+        <span class="icon" data-icon="search"></span>
+        <input id="palette-input" placeholder="Open an example, a file, or start a new one" autocomplete="off" spellcheck="false">
+        <kbd>Esc</kbd>
+      </div>
+      <ul class="palette-list" id="palette-list"></ul>
+      <div class="palette-foot" id="palette-foot"></div>
+    </div>
+  </div>
+
+  <div class="overlay" id="save-dialog" hidden>
+    <div class="dialog save" role="dialog" aria-label="Save as">
+      <h2>Save as</h2>
+      <p class="muted" id="save-root"></p>
+      <input id="save-input" spellcheck="false" autocomplete="off">
+      <div class="dialog-actions">
+        <button class="btn" data-close>Cancel</button>
+        <button class="btn primary" id="save-confirm">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="export-dialog" hidden>
+    <div class="dialog export" role="dialog" aria-label="Export">
+      <div class="dialog-head">
+        <div>
+          <h2>Export</h2>
+          <p class="muted" id="export-sub"></p>
+        </div>
+        <button class="icon-btn" data-close title="Close"><span class="icon" data-icon="close"></span></button>
+      </div>
+      <div class="export-groups" id="export-groups"></div>
+      <div class="export-options">
+        <label>STEP protocol <select id="opt-schema"><option>AP214</option><option>AP242</option></select></label>
+        <label>DXF version <select id="opt-dxf"><option>R2000</option><option>R12</option><option>R2010</option><option>R2018</option></select></label>
+        <label class="check"><input type="checkbox" id="opt-ascii"> ASCII STL</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

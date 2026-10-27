@@ -146,6 +146,34 @@ def cmd_kernel_describe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """FR-U1: the local studio on 127.0.0.1, a random port and a session token."""
+    import urllib.parse
+    import webbrowser
+
+    from gcad.server import StudioServer
+
+    root = Path(args.root or ".").resolve()
+    server = StudioServer(root, port=args.port)
+    url = server.url
+    if args.file:
+        rel = Path(args.file).resolve()
+        if not rel.is_relative_to(root):
+            raise GcadError(f"{args.file} is outside the studio folder {root}")
+        url += "&open=" + urllib.parse.quote(rel.relative_to(root).as_posix())
+    print(f"GCAD Studio on {url}", flush=True)
+    print(f"folder: {root}   (Ctrl+C to stop)", flush=True)
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.httpd.server_close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gcad", description="GCAD Studio command line")
     parser.add_argument("--version", action="version", version=f"gcad {__version__}")
@@ -184,6 +212,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Unix time stamped into STEP, IGES and COLLADA (default: SOURCE_DATE_EPOCH or now)",
     )
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("serve", help="open the studio in your browser (local only)")
+    p.add_argument("file", nargs="?", help="a source file to open")
+    p.add_argument("--root", help="folder to open and save files in (default: current folder)")
+    p.add_argument("--port", type=int, default=0, help="port (default: a free one)")
+    p.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("kernel", help="kernel authoring tools")
     ksub = p.add_subparsers(dest="kernel_command", required=True)

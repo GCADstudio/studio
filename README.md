@@ -2,19 +2,37 @@
 
 A language-agnostic, code-first CAD studio: what Jupyter did for IPython, GCAD Studio aims to do for OpenSCAD. A **kernel** is a modelling language defined by a formal grammar and rewrite rules; the studio parses it into one shared functional core language (GCore), evaluates it to a neutral geometry graph, renders it, and exports it to neutral and vendor formats. The idea comes from [openscad/openscad#2299](https://github.com/openscad/openscad/issues/2299); the full requirements are in [docs/SPEC.md](docs/SPEC.md).
 
+![GCAD Studio: the minscad bracket example, source on the left, the model on the right](docs/studio-dark.png)
+
+## The studio
+
+```bash
+gcad serve                 # opens the studio in your browser; files live in the current folder
+gcad serve part.mscad      # ... and opens a file
+```
+
+- **Code on the left, the model on the right**, re-rendered as you type (Live) or on `F5`. Errors are underlined in the code and listed below; the last good model stays on screen.
+- **Click a number** in the code and drag the slider: the model follows.
+- **Click a face** of the model: the code that made it is selected.
+- **`Ctrl+O`** opens examples and files, **`Ctrl+S`** saves, **`Ctrl+E`** exports to any format below, one click each.
+- Dark and light themes, highlighting derived from each language's own grammar, a GCore tab showing what your code was rewritten into.
+
+It runs on your machine only: the server listens on 127.0.0.1, every call needs the session token in the address it prints, and nothing is loaded from the internet. Geometry is computed in Python; the browser draws it with WebGL, which works with any GPU or with the browser's software renderer.
+
 ## Status
 
-Pre-alpha. Milestones M0 to M4 of [the plan](docs/SPEC.md#12-delivery-plan) are done:
+Pre-alpha. Milestones M0 to M5 of [the plan](docs/SPEC.md#12-delivery-plan) are done; M6 (release) is next.
 
-| Works now | Planned |
-|---|---|
-| GCore language and evaluator with source spans, limits and diagnostics | M5: browser studio (editor, 3D viewer, console) |
-| Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python | M6: release |
-| Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) | |
-| Exact B-rep back-end on [OpenCASCADE](https://dev.opencascade.org); mesh back-end on [Manifold](https://github.com/elalish/manifold); both CPU only | |
-| 3D export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV | |
-| 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM | |
-| `gcad` command line, headless | |
+| Works now |
+|---|
+| The studio: `gcad serve`, editor, 3D and 2D viewer, export dialog |
+| GCore language and evaluator with source spans, limits and diagnostics |
+| Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python |
+| Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) |
+| Exact B-rep back-end on [OpenCASCADE](https://dev.opencascade.org); mesh back-end on [Manifold](https://github.com/elalish/manifold); both CPU only |
+| 3D export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV |
+| 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM |
+| `gcad` command line, headless |
 
 Run `gcad formats` to see every format and which back-ends are available.
 
@@ -117,7 +135,9 @@ pytest -q
 ruff check . && ruff format --check . && mypy
 ```
 
-CI runs the tests and a headless export on Linux, Windows and macOS, each on x86_64 and arm64.
+CI runs the tests and a headless export on Linux, Windows and macOS, each on x86_64 and arm64; drives the studio in headless Chrome with software WebGL (no GPU) and keeps its screenshots; and checks CGM and DXF with LibreOffice. The UI test runs locally too when Playwright and Chrome or Edge are installed (`pip install playwright`).
+
+The front end's JavaScript (three.js, CodeMirror) is vendored in `src/gcad/web/vendor` so the studio works offline; `tools/vendor-web` rebuilds it (`npm ci && npm run build`).
 
 ## Licence
 
