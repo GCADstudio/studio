@@ -61,7 +61,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
     graph = evaluated.result.graph
     if args.dump == "gcore":
         print("\n".join(to_text(f) for f in evaluated.forms))
-    if failed or graph is None:
+    # A file that does not conform (a semantic checker's errors) still has its model.
+    if not evaluated.result.ok or graph is None:
         return 1
     if args.dump == "graph":
         print(json.dumps(graph.to_json(spans=True), indent=2, sort_keys=True))
@@ -70,10 +71,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
     elif args.dump == "summary":
         nodes = graph.nodes()
         print(
-            f"ok: kernel {evaluated.kernel.id}, {graph.root.dim}D model, "
-            f"{len(nodes)} distinct nodes, graph {graph.hash()[:16]}"
+            f"{'ok' if not failed else 'built, not conformant'}: kernel {evaluated.kernel.id}, "
+            f"{graph.root.dim}D model, {len(nodes)} distinct nodes, graph {graph.hash()[:16]}"
         )
-    return 0
+    return 1 if failed else 0
 
 
 def cmd_export(args: argparse.Namespace) -> int:
