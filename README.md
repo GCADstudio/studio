@@ -21,6 +21,15 @@ It runs on your machine only: the server listens on 127.0.0.1, every call needs 
 
 A model that runs away stops with a message instead of hanging: at 10 s of evaluation, a call depth of 1,000, 10⁶ loop iterations or 10⁵ geometry nodes. In Live mode the next edit stops an evaluation still running, so the studio never queues up behind one.
 
+### In the browser, nothing installed
+
+The same studio also runs as a static web site ([SPEC §4.1](docs/SPEC.md#41-web-deployment-mode-m7)): Python runs inside the page through [Pyodide](https://pyodide.org) in a Web Worker, and the mesh back-end is Manifold's own WebAssembly build. Your files stay in the browser (with Upload and Download in `Ctrl+O`), and nothing is sent anywhere. Exact B-rep needs OpenCASCADE, which has no WebAssembly build, so STEP and IGES need the local install; the other twelve formats work. Build the site and serve it with any static file server:
+
+```bash
+python tools/build_site.py --out site    # fetches the pinned, checksummed Pyodide and Manifold once
+python -m http.server -d site 8000       # then open http://127.0.0.1:8000
+```
+
 ## Status
 
 Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-delivery-plan) are done. What changed is in [CHANGELOG.md](CHANGELOG.md).
@@ -35,6 +44,7 @@ Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-deli
 | 3D export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV |
 | 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM |
 | `gcad` command line, headless |
+| The web studio: the same UI and Python core in the browser (Pyodide), a static site for GitHub Pages; no STEP or IGES there |
 
 Run `gcad formats` to see every format and which back-ends are available.
 
@@ -145,7 +155,7 @@ pytest -q
 ruff check . && ruff format --check . && mypy
 ```
 
-CI runs the tests and a headless export on Linux, Windows and macOS, each on x86_64 and arm64; drives the studio in headless Chrome with software WebGL (no GPU) and keeps its screenshots; and checks CGM and DXF with LibreOffice. The UI test runs locally too when Playwright and Chrome or Edge are installed (`pip install playwright`).
+CI runs the tests and a headless export on Linux, Windows and macOS, each on x86_64 and arm64; drives the studio in headless Chrome with software WebGL (no GPU) and keeps its screenshots; and checks CGM and DXF with LibreOffice. The UI test runs locally too when Playwright and Chrome or Edge are installed (`pip install playwright`). A separate job builds the web studio and checks it in headless Chrome (`tests/test_web.py`, which builds the site itself unless `GCAD_SITE` points to one); on `master` that job's site is published to GitHub Pages.
 
 The front end's JavaScript (three.js, CodeMirror) is vendored in `src/gcad/web/vendor` so the studio works offline; `tools/vendor-web` rebuilds it (`npm ci && npm run build`).
 

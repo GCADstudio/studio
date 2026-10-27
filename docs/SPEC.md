@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M5 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -40,6 +40,8 @@ Each design driver below comes from a specific comment in [openscad/openscad#229
 - Headless CLI and a local browser studio with editor, viewer and console (§6).
 - CI on Windows, macOS and Linux, x86_64 and arm64 (§9).
 
+**After the MVE, M7:** the web deployment mode (§4.1): the same studio as a static site, with the Python core running in the visitor's browser.
+
 **Not in the MVE** (designed for, built later): notebook documents and a Jupyter kernel; process kernels for OpenSCAD, CadQuery, Curv and others; importing CAD files; CAM (G-code, HPGL, OpenSBP) and CAE solver decks; assemblies and PMI; fillets/chamfers/hull/Minkowski; the visual node editor; 3D PDF; DWG; ACIS; PHIGS (see §8.3).
 
 ## 4. Architecture
@@ -65,6 +67,37 @@ Stack decision (recommended, open for confirmation in §11): Python core with a 
 - Every heavy dependency ships as a binary wheel for the five desktop targets, verified on PyPI on 2026-10-27: `cadquery-ocp` 8.0.1.1.0 (win_amd64, macOS x86_64/arm64, manylinux_2_28 x86_64/aarch64), `manifold3d` 3.5.4 (also win_arm64), `ezdxf` 1.4.5, `lark` 1.3.1 (pure Python). No compiler is needed to install.
 - GPU and driver differences are absorbed by the browser's WebGL, which falls back to software rendering (SwiftShader, llvmpipe) on machines without a usable GPU.
 - The 2018 thread leaned towards C++/Qt; that is still a valid route but costs a native build and packaging per platform before anything else exists. Doug Moen's objection to Electron (D7) does not apply here because no geometry runs in the browser.
+
+### 4.1 Web deployment mode (M7)
+
+A second way to run the same studio: a static site, published on GitHub Pages, where a visitor edits, views and exports with nothing installed. The UI and the Python core are the ones `gcad serve` uses; only where Python runs changes. D7 still describes `gcad serve`. The web mode is possible because CPython now runs in the browser as WebAssembly ([Pyodide](https://pyodide.org)) and Manifold publishes its own WebAssembly build; neither existed when D7 was written. Exact B-rep geometry (OpenCASCADE) is still native-only, so the web mode is a mesh-and-drawing studio, and the local install remains the full product.
+
+```
+ Browser tab (one static origin, no server-side code)
+ ├─ main thread: UI (editor | viewer | console), the same files as gcad serve
+ │      │ rpc(method, params): one transport switch in js/rpc.js
+ │      │   server mode: HTTP POST /rpc          web mode: postMessage to the worker
+ │      ▼
+ └─ Web Worker: Pyodide (CPython 3.13 in WebAssembly)
+        gcad wheel: kernels, evaluator, exporters, gcad.server.Studio (the same RPC methods)
+        back-end M: gcad.backends.manifold_backend, on manifold-3d (WebAssembly) via Pyodide's JS FFI
+        user files: a folder backed by IndexedDB (Pyodide's IDBFS)
+```
+
+| ID | Pri | Requirement |
+|---|---|---|
+| FR-W1 | M | **What runs where.** The page's main thread only edits and draws, as in server mode. Pyodide runs in a dedicated module Web Worker that answers the §7.1 JSON-RPC methods by calling `gcad.server.Studio` unmodified (a thin subclass only says where files are kept). The UI chooses its transport with one switch; no kernel, evaluation, geometry or export logic is written in JavaScript. |
+| FR-W2 | M | **Mesh back-end.** Back-end M uses Manifold's own WebAssembly build (npm `manifold-3d`, the same version as the `manifold3d` wheel), reached through Pyodide's JS FFI behind the existing back-end interface (§5.4): a small Python binding presents the subset of the `manifold3d` API that `manifold_backend.py` uses, so the realizer (tessellation, twist convention, polyhedron orientation, per-triangle provenance) is shared code, not a port. Decision (2026-10-27): `manifold3d` has no Pyodide recipe; building one would mean pinning Pyodide's exact Emscripten toolchain, cross-compiling its nanobind extension (not tested upstream for Emscripten) and rebuilding and hosting a wheel for every Pyodide ABI, while the JS build is maintained and tested by Manifold's authors. Consequence: the JS binding returns meshes in single precision, so mesh exports carry float32 vertex coordinates (binary STL is float32 anyway); volumes, areas and 2D outlines stay double precision. |
+| FR-W3 | M | **Formats.** Every mesh and 2D format of §8.1 whose exporter works under Pyodide is offered. STEP and IGES are greyed in the export dialog with the reason, as on Windows on ARM (AC-6): they need back-end B, and OpenCASCADE has no Pyodide build (a multi-million-line C++ kernel behind a pybind11 binding; nobody publishes one). An exporter that fails under Pyodide is listed as unavailable with its reason, never offered and then broken. |
+| FR-W4 | M | **Files.** The bundled examples are available read-only, as in server mode. User files are kept in a folder in the browser (IndexedDB, through Pyodide's IDBFS), per browser and per site, and survive reloads; clearing the site's data deletes them, and the UI says where files are kept. *Download* saves the open file to the visitor's disk; *Upload* copies a local file into the browser folder and opens it. |
+| FR-W5 | M | **Limits and responsiveness.** Evaluation and export run in the worker, so the page never blocks; the FR-C6 limits apply unchanged. A newer evaluation replaces a running one (as AC-8): older evaluations still waiting are dropped at once; a running one that has not finished within a short grace period (1 s) is stopped by terminating the worker and handing over to another one, because a busy worker cannot be signalled without `SharedArrayBuffer`, which needs cross-origin-isolation headers that GitHub Pages cannot send. User files live in IndexedDB, so restarting the worker loses nothing. |
+| FR-W6 | M | **Security.** There is no server-side code, no RPC endpoint and so no session token: the origin only serves static files, and sources, models and exports never leave the browser. Every script, WebAssembly module and wheel is served from the site's own origin; nothing is fetched from a CDN at run time. Grammar kernels are still data, and the FR-C6 limits still apply. |
+| FR-W7 | M | **Dependencies pinned and checked.** Pyodide (0.29.5: CPython 3.13, which the CI matrix also tests natively), manifold-3d and every wheel are pinned to exact versions with SHA-256 digests in one manifest in the repository. The build fetches them and fails on any mismatch; Pyodide's own packages (numpy and the pure-Python dependencies it ships) are also checked against the digests in its pinned `pyodide-lock.json`, again when loaded. No third-party binary is committed to git. |
+| FR-W8 | M | **Build.** One command assembles the site into a folder: `src/gcad/web`, a `gcad` wheel built from the checkout, and the pinned assets. The same checkout and manifest give byte-identical output. The folder works from any static file server, including a local copy for offline use; offline use after a first visit relies on the browser cache (a service worker is C). |
+| FR-W9 | M | **Deployment.** CI builds the site and runs its browser tests on every pull request; a separate job publishes it to GitHub Pages (`actions/upload-pages-artifact` + `actions/deploy-pages`) only on pushes to `master`. Enabling Pages for the repository is the owner's decision. |
+| FR-W10 | S | **Load time.** First visit downloads about 15 MB (Pyodide, numpy, the wheels, Manifold) and shows progress; the studio is ready within 20 s on a 50 Mbit/s connection, and within 5 s on later visits. |
+
+As built in M7: `tools/build_site.py` assembles the site from `src/gcad/web` (with `js/mode.js` switched to `"web"`), a `gcad` wheel written directly from the checkout, and the assets pinned in `tools/site-assets.toml` (Pyodide 0.29.5 with numpy, pyparsing, fonttools, typing-extensions and micropip from its lock file; manifold-3d 3.5.4; lark 1.3.1 and ezdxf 1.4.5 from PyPI): about 20 MB uncompressed, byte-identical across builds. The worker installs the wheels with micropip and runs `gcad.browser.BrowserStudio`; `gcad.backends.manifold_js` is the manifold3d-shaped binding. Replacing a runaway (FR-W5): the page keeps a second, booted worker in reserve, which takes over at once and reloads the user's files from IndexedDB, so the next edit's model appears about 1.5 s after it was typed (Live mode's debounce plus the 1 s grace period); booting Python takes about 7 to 17 s on a developer laptop, which a restart without a reserve would add. The browser test reads exports back with trimesh (STL, OBJ, glTF, COLLADA), pyuff (UNV), ezdxf (DXF), pdfminer (PDF) and the CGM structure reader, comparing each with the native export; X3D and VRML are compared with the native file through their point and index lists (the native tests already read them with MeshLab, whose Linux X3D importer failed on the bracket), and SVG and EPS line by line apart from the creation date. FR-W10 has not been measured on a throttled connection.
 
 ## 5. Functional requirements: language and geometry
 
@@ -177,6 +210,8 @@ JSON-RPC 2.0 over WebSocket. Methods: `kernel/list`, `kernel/describe` (extensio
 
 As built in M5: JSON-RPC 2.0 over HTTP POST `/rpc` instead of a WebSocket, because no call needs server-pushed notifications yet and the server then needs only the Python standard library. The session token travels in the URL fragment (never sent to the server) and comes back in an `X-GCAD-Token` header; the `Host` header must be the server's own address (no DNS rebinding). `document/evaluate` returns the mesh as base64 arrays (positions, indices, per-triangle group) with each group's colour and source spans, which is what click-to-source needs; `file/list`, `file/open` and `file/save` work inside the folder `gcad serve` was started in, with bundled examples read-only. A WebSocket can be added when `log`/`progress` notifications are needed.
 
+In web mode (§4.1) the same requests and responses travel by `postMessage` between the page and the worker; `hello` additionally reports `"mode": "web"`, and there is no token.
+
 ### 7.2 Server ↔ process kernel (S)
 
 JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {name, version, extensions, outputs}`, `evaluate {source, params, workdir} → {diagnostics, graph | step_path | mesh_path}`, `shutdown`. The child runs in its own working directory with the same time and memory limits as FR-C6.
@@ -233,7 +268,7 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 | NFR-3 | M | **Python:** the version range is pinned to the intersection of the `cadquery-ocp` and `manifold3d` wheel tags at implementation time (expected 3.11–3.13). |
 | NFR-4 | M | **Install:** `pip install gcad-studio` or `uv tool install gcad-studio`; no compiler, no admin rights, no network after install. |
 | NFR-5 | M | **Security:** server binds to 127.0.0.1 only and requires the session token; grammar kernels are data; trusted-only kernels need explicit consent; evaluation limits per FR-C6. |
-| NFR-6 | M | **Licence:** AGPL-3.0 for GCAD Studio. Dependencies must be AGPL-compatible: Lark (MIT), OCP (Apache-2.0) with OCCT (LGPL-2.1 with exception), Manifold (Apache-2.0), ezdxf (MIT), three.js (MIT), CodeMirror (MIT), Gmsh (GPLv2+, optional). No proprietary SDK is bundled. Test-only readers, installed with the `dev` extra and never distributed: pymeshlab (GPL-3.0), pycollada (BSD), pyuff (MIT), Gmsh. |
+| NFR-6 | M | **Licence:** AGPL-3.0 for GCAD Studio. Dependencies must be AGPL-compatible: Lark (MIT), OCP (Apache-2.0) with OCCT (LGPL-2.1 with exception), Manifold (Apache-2.0), ezdxf (MIT), three.js (MIT), CodeMirror (MIT), Gmsh (GPLv2+, optional). No proprietary SDK is bundled. Test-only readers, installed with the `dev` extra and never distributed: pymeshlab (GPL-3.0), pycollada (BSD), pyuff (MIT), Gmsh. The web site (§4.1) also distributes Pyodide (MPL-2.0) with CPython (PSF), numpy (BSD-3-Clause), pyparsing (MIT), fonttools (MIT) and typing_extensions (PSF), each with its licence. |
 | NFR-7 | S | **Performance targets** on a 4-core laptop CPU without GPU: parse + evaluate the bundled examples in < 200 ms; preview update < 1 s for a model with ≤ 100 boolean operations on back-end M and < 3 s on back-end B. |
 | NFR-8 | M | **Quality gates:** `ruff` and type checks on Python; unit tests for GCore, rewrite engine and each exporter; golden-file tests stored under `tests/golden/` (the repo's `.gitignore` ignores `*.obj`, so OBJ goldens need a negated rule or a different extension). |
 | NFR-9 | M | **CI matrix** (GitHub Actions): `ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest`, `windows-11-arm` (back-end M), `macos-latest` (arm64), and `macos-15-intel` (x86_64). Every job runs the CLI export suite; one job also opens the UI headless and checks the viewer loads a model. |
@@ -249,6 +284,13 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 6. **AC-6 Portability:** the CI matrix of NFR-9 is green; on `windows-11-arm` the B-rep formats are reported as unavailable rather than failing.
 7. **AC-7 Determinism:** exporting twice with `SOURCE_DATE_EPOCH` set gives byte-identical files for every format. (As built: checked in two separate processes with different hash seeds, for every format and both back-ends, on every CI runner.)
 8. **AC-8 Safety:** a source with infinite recursion stops with a diagnostic within the time limit; the UI stays responsive. (As built: the server answers while an evaluation runs, and a newer evaluation stops the running one instead of queueing behind it.)
+
+Web deployment mode (M7, §4.1), checked in CI against the built site served by a plain static file server in headless Chrome:
+
+9. **AC-9 Web studio:** the site loads and is ready with no server-side code (no request reaches an RPC endpoint), and the minscad bracket example evaluates and renders a mesh, in the dark and the light theme.
+10. **AC-10 Web export:** STL and DXF exported in the browser download files that read back with the readers of AC-3 and AC-4 (trimesh, ezdxf) and match the native export; every other format either exports in the worker and reads back, or is reported unavailable with a reason (STEP and IGES).
+11. **AC-11 Web safety:** while a runaway source (`(f 60)` with exponential recursion, csg kernel) evaluates, the page stays responsive, and the next edit replaces it and shows its model before the 10 s limit would have stopped the runaway.
+12. **AC-12 Web parity:** every bundled example gives the same triangle count, bounds, volume and area in the browser as on the native back-end M (within 1e-6 relative).
 
 ## 11. Decisions to confirm before development
 
@@ -268,6 +310,7 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 | M4 | 2D: sections, DXF, SVG, PDF, EPS (CGM if time) | AC-4 |
 | M5 | Browser studio (FR-U1–U6) | Manual walk-through on Windows, macOS, Linux; headless UI check in CI |
 | M6 | Determinism, limits, docs, first release `v0.1.0` | AC-6, AC-7, AC-8 |
+| M7 | Web deployment mode (§4.1): Pyodide worker, Manifold WebAssembly binding, static-site build, GitHub Pages workflow | AC-9 to AC-12 in CI (headless Chrome); screenshots in both themes |
 
 ## 13. Glossary
 
@@ -276,3 +319,5 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 - **GCore:** the shared functional core language every kernel rewrites into.
 - **Geometry graph:** the evaluated, language-neutral model that back-ends realize and exporters consume.
 - **MVE:** minimum viable example, the first end-to-end slice of the product.
+- **Server mode / web mode:** the studio driven by `gcad serve` on the user's machine, or the static site whose Python core runs in the visitor's browser (§4.1).
+- **Pyodide:** CPython compiled to WebAssembly, with a package loader and a JavaScript bridge (FFI).

@@ -6,6 +6,7 @@ const PATHS = {
   code: '<path d="m9 8-5 4 5 4M15 8l5 4-5 4"/>',
   play: '<path d="M7 5v14l11-7z" fill="black"/>',
   download: '<path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/>',
+  upload: '<path d="M12 15V4m0 0-4 4m4-4 4 4M5 20h14"/>',
   theme: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="black"/>',
   fit: '<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/>',
   cube: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',

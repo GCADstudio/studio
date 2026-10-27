@@ -137,6 +137,8 @@ code { font-family: var(--font-mono); font-size: .95em; color: var(--syn-fn); }
 .topbar > * { flex-shrink: 0; }
 .topbar .spacer { flex-shrink: 1; min-width: 0; }
 .brand-name span { font-weight: 450; color: var(--muted); }
+.mode-chip { font-size: 11px; white-space: nowrap; color: var(--accent); background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 20px; padding: 0 8px; line-height: 18px; }
+.mode-chip[hidden] { display: none; }
 
 .file-button, .kernel-select {
   display: flex;
@@ -455,6 +457,7 @@ code { font-family: var(--font-mono); font-size: .95em; color: var(--syn-fn); }
 .export-groups { padding: 8px 18px 4px; display: grid; gap: 14px; max-height: 60vh; overflow: auto; }
 .export-group h3 { margin: 0 0 8px; font-size: 11px; font-weight: 650; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
 .export-group h3 span { text-transform: none; letter-spacing: 0; font-weight: 450; }
+.export-group .group-note { margin: -2px 0 8px; font-size: 12px; color: var(--text-2); }
 .export-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
 .format {
   display: grid;

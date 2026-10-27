@@ -14,6 +14,7 @@ import json
 import mimetypes
 import os
 import secrets
+import sys
 import tempfile
 import threading
 import time
@@ -235,7 +236,12 @@ class Studio:
             if not fmt.available:
                 reason = f"planned for {fmt.milestone}"
             elif fmt.needs == "brep" and status.get("occt") != "ok":
-                reason = "needs OpenCASCADE, which is not installed here"
+                reason = (
+                    "needs OpenCASCADE, which has no WebAssembly build for the browser; "
+                    "install GCAD Studio locally for STEP and IGES"
+                    if sys.platform == "emscripten"
+                    else "needs OpenCASCADE, which is not installed here"
+                )
             out.append(
                 {
                     "id": fmt.id,
@@ -303,6 +309,23 @@ class Studio:
         except TypeError as exc:
             raise RpcError(f"bad parameters for {method}: {exc}", -32602) from None
 
+    def respond(self, request: dict[str, Any]) -> dict[str, object]:
+        """One JSON-RPC 2.0 request to its response; shared by HTTP and the web worker."""
+        request_id: object = None
+        try:
+            request_id = request.get("id")
+            params = request.get("params") or {}
+            if not isinstance(params, dict):
+                raise RpcError("params must be an object", -32602)
+            result = self.call(str(request.get("method", "")), params)
+            return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        except RpcError as exc:
+            error = {"code": exc.code, "message": str(exc)}
+        except Exception as exc:  # report, keep serving
+            traceback.print_exc()
+            error = {"code": -32603, "message": f"internal error: {exc}"}
+        return {"jsonrpc": "2.0", "id": request_id, "error": error}
+
 
 def make_handler(studio: Studio, token: str, host_names: set[str]) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
@@ -355,28 +378,15 @@ def make_handler(studio: Studio, token: str, host_names: set[str]) -> type[BaseH
                 self._send(HTTPStatus.UNAUTHORIZED, b"bad token", "text/plain")
                 return
             length = int(self.headers.get("Content-Length", "0"))
-            request_id: object = None
             try:
                 request = json.loads(self.rfile.read(length) or b"{}")
-                request_id = request.get("id")
-                params = request.get("params") or {}
-                if not isinstance(params, dict):
-                    raise RpcError("params must be an object", -32602)
-                result = studio.call(str(request.get("method", "")), params)
-                body = {"jsonrpc": "2.0", "id": request_id, "result": result}
-            except RpcError as exc:
-                body = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": exc.code, "message": str(exc)},
-                }
-            except Exception as exc:  # report, keep serving
-                traceback.print_exc()
-                body = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {"code": -32603, "message": f"internal error: {exc}"},
-                }
+            except ValueError:
+                request = None
+            if isinstance(request, dict):
+                body = studio.respond(request)
+            else:
+                error = {"code": -32700, "message": "the request is not a JSON object"}
+                body = {"jsonrpc": "2.0", "id": None, "error": error}
             self._send(HTTPStatus.OK, json.dumps(body).encode(), "application/json")
 
     return Handler

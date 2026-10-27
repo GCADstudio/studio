@@ -24,6 +24,7 @@
       <div class="brand" title="GCAD Studio">
         <img src="favicon.svg" alt="" width="22" height="22">
         <span class="brand-name">GCAD <span>Studio</span></span>
+        <span class="mode-chip" id="mode-chip" title="Python runs in this tab: no server, nothing is uploaded" hidden>in your browser</span>
       </div>
       <button class="file-button" id="file-button" title="Open a file (Ctrl+O)">
         <span class="icon" data-icon="file"></span>
@@ -139,6 +140,7 @@
     </div>
   </div>
 
+  <input type="file" id="upload-input" hidden>
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <script type="module" src="js/main.js"></script>
 </body>

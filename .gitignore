@@ -48,5 +48,9 @@ dist/
 # Local export output
 /out/
 
+# The built web studio and its download cache (tools/build_site.py)
+/site/
+/.cache/
+
 # Front-end vendoring tool (its output in src/gcad/web/vendor is committed)
 /tools/vendor-web/node_modules/
