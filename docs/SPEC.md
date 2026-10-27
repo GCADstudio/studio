@@ -247,8 +247,8 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 4. **AC-4 2D export:** a 2D plate (rectangle with holes) and a section of the test part exported to DXF, SVG, PDF and EPS read back with every vertex within 1e-6 mm of the source and at 1:1 scale. (As built: met for DXF, SVG and PDF; EPS is checked through Ghostscript, whose PDF output limits the round trip to 2e-3 mm.)
 5. **AC-5 New language without code:** a third kernel written only as `kernel.toml`, `grammar.lark` and `rewrite.toml` (for example a YAML-like declarative parts list) passes `gcad kernel check` and renders in the UI with highlighting.
 6. **AC-6 Portability:** the CI matrix of NFR-9 is green; on `windows-11-arm` the B-rep formats are reported as unavailable rather than failing.
-7. **AC-7 Determinism:** exporting twice with `SOURCE_DATE_EPOCH` set gives byte-identical files for every format.
-8. **AC-8 Safety:** a source with infinite recursion stops with a diagnostic within the time limit; the UI stays responsive.
+7. **AC-7 Determinism:** exporting twice with `SOURCE_DATE_EPOCH` set gives byte-identical files for every format. (As built: checked in two separate processes with different hash seeds, for every format and both back-ends, on every CI runner.)
+8. **AC-8 Safety:** a source with infinite recursion stops with a diagnostic within the time limit; the UI stays responsive. (As built: the server answers while an evaluation runs, and a newer evaluation stops the running one instead of queueing behind it.)
 
 ## 11. Decisions to confirm before development
 

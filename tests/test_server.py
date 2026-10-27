@@ -5,13 +5,16 @@ import http.client
 import io
 import json
 import struct
+import time
 import zipfile
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from gcad.core.evaluator import Limits
 from gcad.server import StudioServer
 
 BRACKET = Path(__file__).resolve().parents[1] / "src/gcad/kernels/minscad/examples/bracket.mscad"
@@ -140,6 +143,52 @@ def test_evaluate_2d_returns_outlines(server: StudioServer) -> None:
     assert result["area"] == pytest.approx(40)
     assert len(result["contours"]) == 1
     assert result["gcore"] == "(rect [8 5])"
+
+
+# ---------- runaway sources (AC-8) ----------
+
+# Exponential recursion: shallow, so neither the depth nor the iteration limit stops it.
+RUNAWAY = "(define (f n) (if (> n 0) (+ (f (- n 1)) (f (- n 1))) 0)) (f 60)"
+
+
+def test_unbounded_recursion_returns_a_diagnostic(server: StudioServer) -> None:
+    source = "(define (f x) (f x)) (f 1)"
+    result = ok(server, "document/evaluate", kernel="csg", source=source, file="t.gcsg")
+    assert not result["ok"] and "call depth exceeded" in result["diagnostics"][0]["message"]
+    assert ok(server, "document/evaluate", kernel="csg", source="(box 1)")["ok"]
+
+
+def test_runaway_source_hits_the_time_limit(tmp_path: Path) -> None:
+    s = StudioServer(tmp_path, limits=Limits(max_seconds=1))
+    s.start()
+    try:
+        started = time.monotonic()
+        result = ok(s, "document/evaluate", kernel="csg", source=RUNAWAY, file="t.gcsg")
+        assert time.monotonic() - started < 5
+        assert not result["ok"] and "time limit" in result["diagnostics"][0]["message"]
+    finally:
+        s.stop()
+
+
+def test_studio_stays_responsive_during_a_runaway_evaluation(tmp_path: Path) -> None:
+    """While one evaluation runs away, the server answers, and the next edit replaces it at
+    once rather than waiting out the time limit."""
+    s = StudioServer(tmp_path, limits=Limits(max_seconds=30))
+    s.start()
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            runaway = pool.submit(
+                ok, s, "document/evaluate", kernel="csg", source=RUNAWAY, file="t.gcsg"
+            )
+            time.sleep(0.5)  # let it start
+            started = time.monotonic()
+            assert ok(s, "hello")["version"]
+            assert request(s, "GET", "/")[0] == 200
+            assert ok(s, "document/evaluate", kernel="csg", source="(box 1)")["ok"]
+            assert time.monotonic() - started < 5
+            assert runaway.result(timeout=5)["superseded"]
+    finally:
+        s.stop()
 
 
 def test_kernel_list_describes_highlighting(server: StudioServer) -> None:

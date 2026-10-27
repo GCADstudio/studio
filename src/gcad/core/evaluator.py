@@ -17,6 +17,7 @@ shapes they produce (an implicit union, as in OpenSCAD).
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -38,6 +39,8 @@ class Limits:
     max_iterations: int = 1_000_000
     max_nodes: int = 100_000
     max_seconds: float = 10.0
+    #: set from outside to stop early, e.g. when the studio has a newer edit to evaluate
+    stop: threading.Event | None = None
 
 
 class Env:
@@ -203,6 +206,8 @@ class Evaluator:
         self.diagnostics.append(Diagnostic(Severity.INFO, message, span))
 
     def tick(self, span: Span | None) -> None:
+        if self.limits.stop is not None and self.limits.stop.is_set():
+            raise GcadError("evaluation stopped: a newer one replaced it", span)
         if time.monotonic() > self.deadline:
             raise GcadError(
                 f"evaluation exceeded the time limit of {self.limits.max_seconds:g} s", span
