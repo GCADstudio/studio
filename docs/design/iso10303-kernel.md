@@ -191,6 +191,7 @@ Cross-checked against the 14 recorded with freecad-nxstyle. New in this work:
 
 - A file of several hundred thousand instances is parsed by Lark and interpreted in GCore; the studio evaluates rules only up to 5000 instances (`gcad iso check` has no limit). Not yet measured on large production files.
 - Assemblies: explicit B-rep assemblies are composed by OpenCASCADE; CSG or procedural assemblies (mapped items, representation relationships with transformations) are not composed by the prelude yet.
+- Trigonometry is the platform's: Pyodide's and glibc's `sin 240°` differ in the last bit, which changed a sketch's graph hash between the browser and the native studio. The prelude takes sines and cosines in the first quadrant only and reduces exactly; GCore's own `sin` and `cos` are unchanged (that would change existing kernels' hashes).
 - Part 21 edition 3 (anchor, reference and signature sections): out of scope, as the reference set has no copy of the 2016 edition to trace a grammar to.
 - Hybrid output (parametric history plus explicit B-rep in one file, Part 55 5.4.1) is not written yet; the reader shows such files' history and reports the B-rep.
 - The schemas are not in the repository. Committing a compiled dictionary (freecad-nxstyle does, for the resource parts) is Foad's decision; until then CI checks against the AP242 long form only when it fetches it, and the resource-part checks run locally.
