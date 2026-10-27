@@ -250,12 +250,19 @@ def test_libreoffice_reads(tmp_path: Path, ext: str) -> None:
     svgelements = pytest.importorskip("svgelements")
     out = tmp_path / f"plate.{ext}"
     export(SOURCES["plate"], out)
-    subprocess.run(
+    converted = subprocess.run(
         [exe, "--headless", "--convert-to", "svg", "--outdir", str(tmp_path), str(out)],
         check=True,
         capture_output=True,
         timeout=180,
     )
+    keep = os.environ.get("GCAD_READER_ARTIFACTS")
+    if keep:  # keep what LibreOffice made of our file, for inspection
+        folder = Path(keep) / ext
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.copy(out, folder / out.name)
+        shutil.copy(tmp_path / "plate.svg", folder / f"plate-from-{ext}.svg")
+        (folder / "soffice.log").write_bytes(converted.stdout + converted.stderr)
     svg = svgelements.SVG.parse(str(tmp_path / "plate.svg"))
     shapes = [e for e in svg.elements() if isinstance(e, svgelements.Shape) and e.bbox()]
     boxes = np.array([s.bbox() for s in shapes], dtype=float)

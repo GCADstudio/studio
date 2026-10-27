@@ -133,3 +133,10 @@ jobs:
       - run: pytest -q -rs tests/test_2d_formats.py -k libreoffice
         env:
           GCAD_REQUIRE_LIBREOFFICE: "1"
+          GCAD_READER_ARTIFACTS: libreoffice-output
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: libreoffice-output
+          path: libreoffice-output
+          if-no-files-found: ignore
