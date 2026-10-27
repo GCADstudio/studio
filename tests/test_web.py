@@ -13,6 +13,7 @@ Screenshots go to GCAD_UI_ARTIFACTS when that is set. The tests share one page, 
 import base64
 import functools
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -25,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from test_2d_formats import _cgm_elements, _pdf_outlines, assert_same_outlines, model_contours
-from test_mesh_formats import meshlab_load, volume
+from test_mesh_formats import volume
 from test_ui import ARGS, canvas_colors, shot
 
 from gcad.kernels import BUNDLED
@@ -250,10 +251,19 @@ def read_mesh(path: Path) -> tuple[np.ndarray, np.ndarray]:
         xyz = np.column_stack([nodes["x"], nodes["y"], nodes["z"]])
         faces = np.asarray([e["nodes_nums"] for e in sets[2412][91]], dtype=int) - 1
         return xyz, faces
-    mesh = meshlab_load(path).current_mesh()  # X3D, VRML
-    # MeshLab's Linux X3D importer can leave deleted vertices behind; drop them first.
-    mesh.compact()
-    return mesh.vertex_matrix(), mesh.face_matrix()
+    # X3D and VRML: the native tests read these with MeshLab, whose Linux X3D importer breaks
+    # on some files; here the point list (shared by every shape) and the triangle indices are
+    # parsed directly, the same way for the web and the native file.
+    text = path.read_text(encoding="utf-8")
+    if ext == ".x3d":
+        points = re.search(r'point="([^"]*)"', text).group(1)  # type: ignore[union-attr]
+        index = " ".join(re.findall(r'index="([^"]*)"', text)).split()
+    else:
+        points = re.search(r"point \[ ([^\]]*) \]", text).group(1)  # type: ignore[union-attr]
+        lists = re.findall(r"coordIndex \[ ([^\]]*) \]", text)
+        index = [i for i in " ".join(lists).replace(",", " ").split() if i != "-1"]
+    xyz = np.array(points.replace(",", " ").split(), dtype=float).reshape(-1, 3)
+    return xyz, np.array(index, dtype=int).reshape(-1, 3)
 
 
 def test_every_format_exports_or_says_why(page: object, native: Studio, tmp_path: Path) -> None:
@@ -281,7 +291,7 @@ def test_every_format_exports_or_says_why(page: object, native: Studio, tmp_path
 def check_against_native(fmt: str, web: Path, ref: Path) -> None:
     if fmt in ("stl", "obj", "glb", "dae", "x3d", "vrml", "unv"):
         (wv, wf), (rv, rf) = read_mesh(web), read_mesh(ref)
-        assert len(wf) == len(rf), fmt
+        assert len(wf) > 100 and len(wf) == len(rf), (fmt, len(wf), len(rf))
         assert volume(wv, wf) == pytest.approx(volume(rv, rf), rel=1e-5), fmt
         return
     expected = model_contours(PLATE)
@@ -378,12 +388,9 @@ def test_light_theme_palette_and_export_dialog(page: object) -> None:
 def test_uploaded_file_is_kept_in_the_browser(page: object, tmp_path: Path) -> None:
     mine = tmp_path / "mine.gcsg"
     mine.write_text("(box [6 5 9])\n", encoding="utf-8")
-    page.keyboard.press("Control+o")  # type: ignore[attr-defined]
-    page.wait_for_selector("#palette:not([hidden]) .item")  # type: ignore[attr-defined]
-    page.fill("#palette-input", "upload")  # type: ignore[attr-defined]
-    with page.expect_file_chooser() as chooser:  # type: ignore[attr-defined]
-        page.keyboard.press("Enter")  # type: ignore[attr-defined]
-    chooser.value.set_files(str(mine))
+    # The palette's "Upload a file…" clicks this input; whether Chrome then shows a chooser
+    # depends on user-activation timing, so the test hands the file to the input directly.
+    page.set_input_files("#upload-input", str(mine))  # type: ignore[attr-defined]
     page.wait_for_function(  # type: ignore[attr-defined]
         "() => document.querySelector('#file-name').textContent === 'mine.gcsg'"
     )

@@ -123,13 +123,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: System libraries for MeshLab (X3D and VRML read-back)
-        run: |
-          echo "set man-db/auto-update false" | sudo debconf-set-selections
-          sudo rm -f /var/lib/man-db/auto-update
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
-            libopengl0 libglu1-mesa
       - run: python -m pip install -e ".[dev]" playwright
       - uses: actions/cache@v4
         with:

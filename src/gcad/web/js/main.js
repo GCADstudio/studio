@@ -376,26 +376,23 @@ function downloadFile() {
 }
 
 function uploadFile() {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.hidden = true;
+  const input = $("#upload-input");
   input.accept = [...state.kernels.values()].flatMap((k) => k.extensions).join(",");
-  document.body.append(input); // some browsers open no chooser for a detached input
-  input.addEventListener("cancel", () => input.remove());
-  input.addEventListener("change", async () => {
-    const file = input.files[0];
-    input.remove();
-    if (!file) return;
-    try {
-      const saved = await rpc("file/save", { path: file.name, text: await file.text() });
-      await openFile(saved.path);
-      toast(`Uploaded ${saved.name}`);
-    } catch (error) {
-      toast(error.message, "error");
-    }
-  });
+  input.value = ""; // choosing the same file again still counts as a change
   input.click();
 }
+
+$("#upload-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const saved = await rpc("file/save", { path: file.name, text: await file.text() });
+    await openFile(saved.path);
+    toast(`Uploaded ${saved.name}`);
+  } catch (error) {
+    toast(error.message, "error");
+  }
+});
 
 $("#palette-input").addEventListener("input", () => { paletteIndex = 0; renderPalette(); });
 $("#palette-input").addEventListener("keydown", (e) => {
