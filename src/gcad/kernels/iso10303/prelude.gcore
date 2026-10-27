@@ -592,10 +592,15 @@
         (rad0 (length r 5 "circle_radius" ctx))
         (rad (if (== (enum (attr r 4)) "CIRCUMSCRIBED") (/ rad0 (cos (/ 180 n))) rad0))
         (v (* rad (unit (- s c)))))
-    ; the start vertex turned by k * 360 / n (no atan2: its last bit differs between libms)
+    ; the start vertex turned by k * 360 / n
     (polygon (for ((k (range 0 (- n 1))))
-               (let ((ca (cos (* k (/ 360 n)))) (sa (sin (* k (/ 360 n)))))
+               (let ((cs (cos-sin (* k (/ 360 n)))) (ca (get cs 0)) (sa (get cs 1)))
                  (+ c [(- (* (get v 0) ca) (* (get v 1) sa)) (+ (* (get v 0) sa) (* (get v 1) ca))]))))))
+; [cos a, sin a] from the first quadrant only, by exact reduction: libraries' last bits differ
+; elsewhere (sin 240 in WebAssembly and glibc), and the graph must not depend on the platform.
+(define (cos-sin a)
+  (let ((q (floor (/ a 90))) (r (- a (* 90 q))) (c (cos r)) (s (sin r)) (m (% q 4)))
+    (if (== m 0) [c s] (if (== m 1) [(- s) c] (if (== m 2) [(- c) (- s)] [s (- c)])))))
 (define (solid/CREATE_CIRCLE_CENTRE_POINT r ctx)
   (place (translation (pad3 (p2 (attr r 1) ctx))) (circle (length r 2 "radius" ctx))))
 (define (solid/CREATE_CIRCLE_2_POINTS r ctx)
