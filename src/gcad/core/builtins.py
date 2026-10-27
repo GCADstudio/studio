@@ -23,6 +23,7 @@ from gcad.core.evaluator import (
 )
 from gcad.core.graph import ArgValue, Node, empty, rotation_axis
 from gcad.core.sexpr import Num, SList, Str, Sym, format_number
+from gcad.core.trace import traced_call
 from gcad.diagnostics import GcadError, Span
 
 HINTS = ("$fn", "$fa", "$fs")
@@ -511,7 +512,7 @@ def _numeric(
         result = float(fn(x))
         if not math.isfinite(result):
             raise GcadError(f"'{name}' of {format_number(x)} is not finite", ctx.span)
-        return result
+        return traced_call(name, x, result)
 
     return call
 

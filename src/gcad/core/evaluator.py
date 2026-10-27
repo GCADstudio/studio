@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 
 from gcad.core.graph import ArgValue, Graph, Node, empty, make_node
 from gcad.core.sexpr import Expr, Kw, Num, SList, Str, Sym
+from gcad.core.trace import Traced
 from gcad.diagnostics import Diagnostic, GcadError, Severity, Span
 
 
@@ -184,6 +185,8 @@ class Evaluator:
         #: the source text, for `import-source`; set by run()
         self.source = ""
         self.blobs: dict[str, bytes] = {}
+        #: the program's own scope in trace mode: its numeric definitions become parameters
+        self.trace_env: Env | None = None
 
     # -- entry point ----------------------------------------------------------------------
 
@@ -193,9 +196,11 @@ class Evaluator:
         metadata: dict[str, str] | None = None,
         prelude: list[Expr] | None = None,
         source: str = "",
+        trace: bool = False,
     ) -> EvalResult:
         """Evaluate a program. A kernel prelude gets its own scope between the built-ins and
-        the program, so the program can redefine any name the prelude provides."""
+        the program, so the program can redefine any name the prelude provides. In trace
+        mode the program's top-level numeric definitions are its parameters (FR-C10)."""
         self.source = source
         self.deadline = time.monotonic() + self.limits.max_seconds
         old_limit = sys.getrecursionlimit()
@@ -207,6 +212,7 @@ class Evaluator:
                 if prelude_value is not None:
                     self.warn("a kernel prelude should only define names", prelude[-1].span)
                 scope = Env(scope)
+            self.trace_env = scope if trace else None
             value = self.block(forms, scope, top_level=True)
             shapes = self.collect_top_level(value, forms)
             if not shapes:
@@ -435,7 +441,11 @@ class Evaluator:
     def define_value(self, form: SList, env: Env) -> None:
         if len(form.items) != 3 or not isinstance(form.items[1], Sym):
             raise GcadError("expected (define name expr)", form.span)
-        env.vars[form.items[1].name] = self.eval(form.items[2], env)
+        name, expr = form.items[1].name, form.items[2]
+        if env is self.trace_env and isinstance(expr, Num):
+            env.vars[name] = Traced(expr.value, ("param", name, expr.value))
+            return
+        env.vars[name] = self.eval(expr, env)
 
     def parse_params(
         self, items: tuple[Expr, ...], span: Span | None
@@ -602,5 +612,6 @@ def evaluate(
     metadata: dict[str, str] | None = None,
     prelude: list[Expr] | None = None,
     source: str = "",
+    trace: bool = False,
 ) -> EvalResult:
-    return Evaluator(limits).run(forms, metadata, prelude, source)
+    return Evaluator(limits).run(forms, metadata, prelude, source, trace)
