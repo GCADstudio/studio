@@ -98,12 +98,25 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 
 def cmd_kernel_check(args: argparse.Namespace) -> int:
+    """FR-K4: manifest, grammar, rewrite coverage, prelude, then every example."""
     kernel = load_kernel(Path(args.dir))
     print(f"manifest ok: {kernel.id} {kernel.version} ({kernel.parser})")
+    failures = 0
+    if kernel.is_grammar:
+        report = kernel.grammar().check()
+        for w in report.warnings:
+            print(f"warning: {w}", file=sys.stderr)
+        for e in report.errors:
+            print(f"error: {e}", file=sys.stderr)
+        failures += len(report.errors)
+        rules = len(kernel.grammar().templates)
+        print(f"grammar ok: {rules} rewrite rules" if not report.errors else "grammar FAIL")
+    prelude = kernel.prelude()
+    if prelude:
+        print(f"prelude ok: {len(prelude)} forms")
     examples = kernel.examples()
     if not examples:
         print("warning: no examples/ to run", file=sys.stderr)
-    failures = 0
     for path in examples:
         evaluated = evaluate_source(path.read_text(encoding="utf-8"), str(path), kernel)
         failed = print_diagnostics(evaluated.result.diagnostics)
@@ -113,6 +126,20 @@ def cmd_kernel_check(args: argparse.Namespace) -> int:
         else:
             print(f"ok   {path.name}  graph {evaluated.result.graph.hash()[:16]}")
     return 1 if failures else 0
+
+
+def cmd_kernel_describe(args: argparse.Namespace) -> int:
+    """What an editor needs: extensions, comment syntax, highlight classes (FR-K5)."""
+    target = Path(args.kernel)
+    if (target / "kernel.toml").is_file():
+        kernel = load_kernel(target)
+    else:
+        kernels, _ = discover()
+        if args.kernel not in kernels:
+            raise GcadError(f"no kernel '{args.kernel}' (give an id or a kernel folder)")
+        kernel = kernels[args.kernel]
+    print(json.dumps(kernel.describe(), indent=2))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -148,6 +175,9 @@ def build_parser() -> argparse.ArgumentParser:
     k = ksub.add_parser("check", help="validate a kernel folder and run its examples")
     k.add_argument("dir")
     k.set_defaults(func=cmd_kernel_check)
+    k = ksub.add_parser("describe", help="print a kernel's extensions and highlight classes")
+    k.add_argument("kernel", help="kernel id or folder")
+    k.set_defaults(func=cmd_kernel_describe)
     return parser
 
 

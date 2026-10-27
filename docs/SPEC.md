@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 and M1 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0, M1 and M2 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -88,19 +88,22 @@ A kernel is a folder; no Python is required:
 
 ```
 kernels/minscad/
-  kernel.toml     id, display name, version, file extensions, comment syntax, start rule, parser (earley|lalr)
+  kernel.toml     id, display name, version, file extensions, comment syntax, start rule, parser (gcore|earley|lalr)
   grammar.lark    Lark EBNF grammar of the surface language
-  rewrite.toml    one GCore template per grammar rule alias
+  rewrite.toml    [rules]: one GCore template per tree name; [tokens]: how terminals become GCore atoms
+  prelude.gcore   optional GCore definitions evaluated in their own scope (e.g. OpenSCAD's cube -> box)
   examples/       sample sources, used as tests
 ```
 
-Rewrite rules map each aliased grammar rule to a GCore template. `$1…$n` are the rule's children in order, `$name` is a named child, `$*` splices a list, `$text` is the matched text. Example:
+Rewrite rules map each tree the parser can build (a rule name or an `-> alias`) to a GCore template. Placeholders refer to the tree's children, 1-based, after Lark drops anonymous punctuation: `$n` is child n rewritten, `$n*` splices child n's children, `$*` splices all children, `$n:str` / `$n:sym` / `$n:num` take child n's source text, `:$n` makes a keyword named by child n. An optional part that did not match is an absent child and produces nothing. A template may hold several forms (spliced into the parent) or none (the node disappears). As built in M2, from `minscad`:
 
 ```toml
-# grammar.lark:  call: NAME "(" [arguments] ")" (block | ";")  -> call
-call      = "(call $1 $2* $3)"
-# grammar.lark:  assignment: NAME "=" expr ";"                 -> assign
-assign    = "(let $1 $2)"
+# grammar.lark:  NAME "(" [arguments] ")" statement   -> instantiation
+instantiation = "($1 $2* $3)"
+# grammar.lark:  NAME "=" expr                         -> named_arg
+named_arg = ":$1 $2"
+# grammar.lark:  "[" expr ":" expr ":" expr "]"        -> range_step
+range_step = "(range $1 $3 $2)"
 ```
 
 | ID | Pri | Requirement |
@@ -108,16 +111,17 @@ assign    = "(let $1 $2)"
 | FR-K1 | M | Grammar notation is Lark EBNF, loaded at run time (Earley for any context-free grammar, LALR(1) when declared for speed). No parser generation step. |
 | FR-K2 | M | Rewrite rules are declarative templates; a kernel that is only `kernel.toml`, `grammar.lark` and `rewrite.toml` works. |
 | FR-K3 | M | Dropping a kernel folder into the kernel path (`./kernels`, user config dir, or `GCAD_KERNEL_PATH`) makes it available to the next CLI command and to the UI after a kernel reload. |
-| FR-K4 | M | `gcad kernel check <dir>` validates the manifest, compiles the grammar, checks that every alias has a rewrite rule, and runs `examples/`. |
-| FR-K5 | M | Syntax highlighting is derived from the grammar: string literals become keywords, named terminals map to token classes declared in `kernel.toml`. |
+| FR-K4 | M | `gcad kernel check <dir>` validates the manifest, compiles the grammar, checks that every tree the grammar can produce has a rewrite rule (and warns about rules that match nothing), reads the prelude, and runs `examples/`. |
+| FR-K5 | M | Syntax highlighting is derived from the grammar: word literals become keywords, other literals operators, ignored terminals comments, and named terminals take the classes in `rewrite.toml [tokens]`. `gcad kernel describe <id>` prints them for an editor. |
 | FR-K6 | S | Optional `transform.py` escape hatch for semantics templates cannot express. Such kernels are marked **trusted-only** and the UI asks before loading one from an untrusted folder. |
 | FR-K7 | S | Process kernels: an external program speaking the stdio protocol (§7.2) returns a geometry graph, a STEP file or a mesh. First target: OpenSCAD, using its `.csg` export parsed by the `minscad` grammar. |
 | FR-K8 | C | Import of ISO 14977 EBNF and W3C EBNF grammars by conversion to Lark. |
 
 Bundled kernels:
 
-- **`minscad`** (M): OpenSCAD subset — the geometry built-ins of §5.3 with OpenSCAD names and argument conventions, variables, arithmetic, `for`, `if`, `module` and `function` definitions, `$fn/$fa/$fs` as tessellation hints.
-- **`csg`** (M): an S-expression language close to GCore, showing that a homoiconic language needs almost no rewrite rules. File extension `.gcsg`, because OpenSCAD already uses `.csg` for its CSG-tree export (FR-K7). In M1 it is read by the built-in GCore reader; M2 re-expresses it as a grammar kernel.
+- **`minscad`** (M): OpenSCAD subset — the geometry built-ins of §5.3 with OpenSCAD names and argument conventions, variables, arithmetic, `for`, `if`, `module` and `function` definitions, `$fn/$fa/$fs` as tessellation hints. As built in M2 (`.mscad`, LALR grammar, 55 rewrite rules, a 5-form prelude): also `let`, ternaries, function literals, `children()`/`$children`, `v.x`, ranges, list comprehensions with one `for`, and the `* % # !` modifiers (`*` and `%` drop the object; `#` and `!` keep it). Not yet: `use`/`include` (reported as errors), `if` and `each` inside list comprehensions, `intersection_for`, `import`, `surface`, `text`, and OpenSCAD's scope rule that the last assignment to a name wins in the whole scope (minscad assignments are sequential). Every bundled example is a valid OpenSCAD file and is checked against OpenSCAD output.
+- **`csg`** (M): an S-expression language close to GCore, showing that a homoiconic language needs almost no rewrite rules: three, as built in M2. File extension `.gcsg`, because OpenSCAD already uses `.csg` for its CSG-tree export (FR-K7).
+- **`parts`** (added in M2 for AC-5): a declarative parts list, one solid per line, written only as `kernel.toml`, `grammar.lark` and `rewrite.toml`.
 
 ### 5.3 Geometry graph
 

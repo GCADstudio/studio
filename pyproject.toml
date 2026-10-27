@@ -22,6 +22,7 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    "lark>=1.2",
     "manifold3d>=3.2",
     "numpy>=1.26",
 ]

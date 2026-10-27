@@ -95,7 +95,8 @@ def test_2d_booleans_and_polygon_paths() -> None:
 
 def test_triangles_trace_back_to_nodes_and_colours() -> None:
     source = (
-        '(difference (color "red" (box 10)) (color [0 0 1] (translate [5 5 -1] (cylinder 12 2))))'
+        '(difference (color "red" (box 10))'
+        " (color [0 0 1] (translate [5 5 -1] (cylinder 12 :r 2))))"
     )
     graph = ok(source).graph
     assert graph is not None

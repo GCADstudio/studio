@@ -4,8 +4,12 @@ Search order, first match wins: GCAD_KERNEL_PATH entries, ./kernels, the user ke
 then the kernels bundled with GCAD Studio.
 
 Parsers:
-    gcore   the source is GCore S-expression text (milestone M1)
-    lark    grammar.lark + rewrite.toml (milestone M2)
+    gcore   the source is GCore S-expression text
+    earley  grammar.lark (any context-free grammar) + rewrite.toml
+    lalr    grammar.lark (LALR(1), faster) + rewrite.toml
+
+A kernel may also ship prelude.gcore: GCore definitions evaluated in a scope between the
+built-ins and the user's program, for renames such as OpenSCAD's cube -> box.
 """
 
 from __future__ import annotations
@@ -18,9 +22,10 @@ from pathlib import Path
 
 from gcad.core.sexpr import Expr, read
 from gcad.diagnostics import GcadError
+from gcad.kernels.grammar import GrammarKernel, load_grammar_kernel
 
 BUNDLED = Path(__file__).parent
-PARSERS = ("gcore", "lark")
+PARSERS = ("gcore", "earley", "lalr")
 REQUIRED = ("id", "name", "version", "extensions", "parser")
 
 
@@ -34,11 +39,40 @@ class Kernel:
     comment: str
     path: Path
     description: str = ""
+    start: str = "start"
+
+    @property
+    def is_grammar(self) -> bool:
+        return self.parser in ("earley", "lalr")
+
+    def grammar(self) -> GrammarKernel:
+        if not self.is_grammar:
+            raise GcadError(f"kernel '{self.id}' has no grammar (parser = {self.parser})")
+        return load_grammar_kernel(self.id, self.path, self.parser, self.start)
 
     def to_gcore(self, source: str, file: str) -> list[Expr]:
         if self.parser == "gcore":
             return read(source, file)
-        raise GcadError(f"kernel '{self.id}': parser '{self.parser}' arrives in milestone M2")
+        return self.grammar().to_gcore(source, file)
+
+    def prelude(self) -> list[Expr]:
+        path = self.path / "prelude.gcore"
+        if not path.is_file():
+            return []
+        return read(path.read_text(encoding="utf-8"), f"{self.id}/prelude.gcore")
+
+    def describe(self) -> dict[str, object]:
+        info: dict[str, object] = {
+            "id": self.id,
+            "name": self.name,
+            "version": self.version,
+            "extensions": list(self.extensions),
+            "parser": self.parser,
+            "comment": self.comment,
+        }
+        if self.is_grammar:
+            info["highlight"] = self.grammar().describe()
+        return info
 
     def examples(self) -> list[Path]:
         folder = self.path / "examples"
@@ -76,6 +110,7 @@ def load_kernel(folder: Path) -> Kernel:
         comment=str(data.get("comment", "")),
         path=folder,
         description=str(data.get("description", "")),
+        start=str(data.get("start", "start")),
     )
 
 

@@ -25,10 +25,11 @@ def evaluate_source(
 ) -> Evaluated:
     try:
         forms = kernel.to_gcore(source, file)
+        prelude = kernel.prelude()
     except GcadError as exc:
         return Evaluated(kernel, [], EvalResult(None, [exc.diagnostic]))
     metadata = {"title": Path(file).stem, "source": Path(file).name, "kernel": kernel.id}
-    return Evaluated(kernel, forms, evaluate(forms, limits, metadata))
+    return Evaluated(kernel, forms, evaluate(forms, limits, metadata, prelude))
 
 
 def evaluate_file(

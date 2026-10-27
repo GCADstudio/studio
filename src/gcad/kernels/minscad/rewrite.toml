@@ -1,0 +1,71 @@
+# minscad -> GCore. Placeholders: $n child n, $n* its children spliced, $* all children,
+# $n:str source text as a string, :$n a keyword named by child n. See docs/kernel-authoring.md.
+
+[rules]
+start = "$*"
+
+# statements
+empty = ""
+block = "(let () $*)"
+assignment = "(define $1 $2)"
+module_def = "(module ($1 $2*) $3)"
+function_def = "(define ($1 $2*) $3)"
+instantiation = "($1 $2* $3)"
+children_stmt = "(pick-children children $1)"
+if_stmt = "(if $1 $2 $3)"
+for_stmt = "(for ($1*) $2)"
+let_stmt = "(let ($1*) $2)"
+disabled = ""
+background = ""
+highlight = "$1"
+root = "$1"
+use = '(assert false (str "use is not supported yet: " $1:str))'
+include = '(assert false (str "include is not supported yet: " $1:str))'
+
+# parameters, arguments and bindings; the list rules splice their items
+params = "$*"
+arguments = "$*"
+bindings = "$*"
+items = "$*"
+param_plain = "$1"
+param_default = "($1 $2)"
+pos_arg = "$1"
+named_arg = ":$1 $2"
+binding = "($1 $2)"
+
+# expressions
+let_expr = "(let ($1*) $2)"
+lambda = "(fn ($1*) $2)"
+cond = "(if $1 $2 $3)"
+or = "(or $1 $2)"
+and = "(and $1 $2)"
+eq = "(== $1 $2)"
+ne = "(!= $1 $2)"
+lt = "(< $1 $2)"
+le = "(<= $1 $2)"
+gt = "(> $1 $2)"
+ge = "(>= $1 $2)"
+add = "(+ $1 $2)"
+sub = "(- $1 $2)"
+mul = "(* $1 $2)"
+div = "(/ $1 $2)"
+mod = "(% $1 $2)"
+neg = "(- $1)"
+not = "(not $1)"
+pow = "(pow $1 $2)"
+call = "($1 $2*)"
+index = "(get $1 $2)"
+member = "(member $1 $2:str)"
+true = "true"
+false = "false"
+undef = "undef"
+vector = "[$1*]"
+range = "(range $1 $2)"
+range_step = "(range $1 $3 $2)"
+list_for = "(for ($1*) $2)"
+
+[tokens]
+NAME = "symbol"
+NUMBER = "number"
+STRING = "string"
+FILENAME = "text"

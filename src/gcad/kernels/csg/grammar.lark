@@ -1,0 +1,19 @@
+// csg: S-expressions, the surface form of GCore itself.
+// The token rules mirror the built-in GCore reader exactly, so both read the same programs.
+
+start: _form*
+
+_form: list | vector | NUMBER | STRING | KEYWORD | SYMBOL
+
+list: "(" _form* ")"
+vector: "[" _form* "]"
+
+// A number must end at a delimiter; "1+" is a symbol, as in the GCore reader.
+NUMBER: /[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?(?=[\s()\[\];"]|$)/
+STRING: /"(\\.|[^"\\\n])*"/
+KEYWORD: /:[^\s()\[\];"]+/
+SYMBOL: /(?![+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?(?=[\s()\[\];"]|$))[^\s()\[\];":][^\s()\[\];"]*/
+
+COMMENT: /;[^\n]*/
+%ignore COMMENT
+%ignore /\s+/

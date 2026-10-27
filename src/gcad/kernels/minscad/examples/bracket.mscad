@@ -1,0 +1,27 @@
+// L-bracket with a row of mounting holes in each flange.
+// The same model as csg/examples/bracket.gcsg; both give the same geometry graph (SPEC AC-1).
+
+width = 40;
+depth = 30;
+thickness = 5;
+height = 25;
+hole_d = 5;
+pitch = 10;
+
+// A row of n through-holes along +x, sized for a plate of thickness h.
+module holes(n, h = thickness) {
+    for (i = [0 : n - 1])
+        translate([i * pitch, 0, -1]) cylinder(h = h + 2, d = hole_d);
+}
+
+color([0.25, 0.45, 0.85])
+    difference() {
+        union() {
+            cube([width, depth, thickness]);
+            cube([width, thickness, height]);
+        }
+        // holes in the base plate
+        translate([10, depth / 2, 0]) holes(3);
+        // holes in the upright plate, drilled along +y
+        translate([10, 0, height - 8]) rotate([-90, 0, 0]) holes(3);
+    }

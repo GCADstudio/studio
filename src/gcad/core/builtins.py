@@ -127,9 +127,11 @@ def bind(
             continue
         if key not in names:
             raise GcadError(f"'{name}' has no parameter '{key}'", ctx.span)
-        if key in values:
+        if key in values and values[key] is not None:
             raise GcadError(f"'{name}' got '{key}' twice", ctx.span)
         values[key] = value
+    # Passing undef is the same as not passing the argument, as in OpenSCAD.
+    values = {k: v for k, v in values.items() if v is not None}
     for pname, default in params:
         values.setdefault(pname, default)
     if hints:
@@ -195,15 +197,16 @@ def g_sphere(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Nod
 
 
 def g_cylinder(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
+    # Positional order is OpenSCAD's: cylinder(h, r1, r2, center).
     params: list[tuple[str, object]] = [
         ("h", 1.0),
-        ("r", 1.0),
         ("r1", None),
         ("r2", None),
+        ("center", False),
+        ("r", 1.0),
         ("d", None),
         ("d1", None),
         ("d2", None),
-        ("center", False),
     ]
     v, _ = bind("cylinder", params, args, kwargs, ctx, hints=True)
     base = radius(v, "r", "d", ctx.span)
@@ -230,7 +233,9 @@ def g_cylinder(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> N
 
 
 def g_polyhedron(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
-    v, _ = bind("polyhedron", [("points", None), ("faces", None)], args, kwargs, ctx)
+    # convexity is an OpenSCAD preview hint; it is accepted and ignored.
+    params: list[tuple[str, object]] = [("points", None), ("faces", None), ("convexity", None)]
+    v, _ = bind("polyhedron", params, args, kwargs, ctx)
     points = as_points(v["points"], 3, "points", ctx.span)
     faces = as_index_lists(v["faces"], len(points), "faces", ctx.span)
     return ctx.ev.node("polyhedron", {"points": points, "faces": faces}, [], ctx.span, 3)
@@ -264,7 +269,8 @@ def g_circle(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Nod
 
 
 def g_polygon(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
-    v, _ = bind("polygon", [("points", None), ("paths", None)], args, kwargs, ctx)
+    params: list[tuple[str, object]] = [("points", None), ("paths", None), ("convexity", None)]
+    v, _ = bind("polygon", params, args, kwargs, ctx)
     points = as_points(v["points"], 2, "points", ctx.span)
     out: dict[str, ArgValue] = {"points": points}
     if v["paths"] is not None:
@@ -361,12 +367,14 @@ def _boolean(op: str) -> BuiltinFn:
 
 
 def g_linear_extrude(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
+    # Positional order is OpenSCAD's; convexity is accepted and ignored.
     params: list[tuple[str, object]] = [
         ("height", 1.0),
         ("center", False),
+        ("convexity", None),
         ("twist", 0.0),
-        ("scale", 1.0),
         ("slices", 0.0),
+        ("scale", 1.0),
     ]
     v, children = bind("linear_extrude", params, args, kwargs, ctx)
     if not children:
@@ -396,7 +404,8 @@ def g_linear_extrude(args: list[object], kwargs: dict[str, object], ctx: CallCtx
 
 
 def g_rotate_extrude(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
-    v, children = bind("rotate_extrude", [("angle", 360.0)], args, kwargs, ctx, hints=True)
+    params: list[tuple[str, object]] = [("angle", 360.0), ("convexity", None)]
+    v, children = bind("rotate_extrude", params, args, kwargs, ctx, hints=True)
     if not children:
         return empty(3, ctx.span)
     if same_dim(children, "rotate_extrude", ctx.span) != 2:
@@ -693,6 +702,16 @@ def b_echo(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
     return None
 
 
+def b_assert(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
+    """(assert cond [message]): stop with an error when cond is false."""
+    if not args or len(args) > 2:
+        raise GcadError("'assert' takes a condition and an optional message", ctx.span)
+    if not truthy(args[0]):
+        detail = f": {show(args[1])}" if len(args) == 2 else ""
+        raise GcadError(f"assertion failed{detail}", ctx.span)
+    return None
+
+
 def _is(name: str, test: Callable[[object], bool]) -> BuiltinFn:
     def call(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> bool:
         if len(args) != 1:
@@ -766,6 +785,7 @@ def global_env() -> Env:
         "cross": b_cross,
         "str": b_str,
         "echo": b_echo,
+        "assert": b_assert,
         "is_undef": _is("is_undef", lambda v: v is None),
         "is_num": _is("is_num", lambda v: isinstance(v, float) and not isinstance(v, bool)),
         "is_bool": _is("is_bool", lambda v: isinstance(v, bool)),

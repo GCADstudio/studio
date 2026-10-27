@@ -146,12 +146,25 @@ class Evaluator:
 
     # -- entry point ----------------------------------------------------------------------
 
-    def run(self, forms: list[Expr], metadata: dict[str, str] | None = None) -> EvalResult:
+    def run(
+        self,
+        forms: list[Expr],
+        metadata: dict[str, str] | None = None,
+        prelude: list[Expr] | None = None,
+    ) -> EvalResult:
+        """Evaluate a program. A kernel prelude gets its own scope between the built-ins and
+        the program, so the program can redefine any name the prelude provides."""
         self.deadline = time.monotonic() + self.limits.max_seconds
         old_limit = sys.getrecursionlimit()
         sys.setrecursionlimit(max(old_limit, 40 * self.limits.max_depth + 1000))
         try:
-            value = self.block(forms, Env(self.globals), top_level=True)
+            scope = Env(self.globals)
+            if prelude:
+                prelude_value = self.block(prelude, scope, top_level=True)
+                if prelude_value is not None:
+                    self.warn("a kernel prelude should only define names", prelude[-1].span)
+                scope = Env(scope)
+            value = self.block(forms, scope, top_level=True)
             shapes = self.collect_top_level(value, forms)
             if not shapes:
                 root = empty()
@@ -294,6 +307,7 @@ class Evaluator:
                         plain.append(a)
                 args = plain
                 local.vars["children"] = Shapes(children)
+                local.vars["$children"] = float(len(children))
             if len(args) > len(fn.params):
                 raise GcadError(
                     f"'{fn.name}' takes {len(fn.params)} arguments but {len(args)} were given",
@@ -400,7 +414,8 @@ class Evaluator:
         return Closure(params, list(form.items[2:]), env, "<fn>", False, form.span)
 
     def bindings(self, form: SList, what: str) -> list[tuple[str, Expr]]:
-        if len(form.items) < 3 or not isinstance(form.items[1], SList):
+        # An empty body is allowed: (let ()) is the value of an empty block, undef.
+        if len(form.items) < 2 or not isinstance(form.items[1], SList):
             raise GcadError(f"expected ({what} ((name expr)...) body...)", form.span)
         out = []
         for b in form.items[1].items:
@@ -480,6 +495,9 @@ def _defines_function(form: Expr) -> bool:
 
 
 def evaluate(
-    forms: list[Expr], limits: Limits | None = None, metadata: dict[str, str] | None = None
+    forms: list[Expr],
+    limits: Limits | None = None,
+    metadata: dict[str, str] | None = None,
+    prelude: list[Expr] | None = None,
 ) -> EvalResult:
-    return Evaluator(limits).run(forms, metadata)
+    return Evaluator(limits).run(forms, metadata, prelude)

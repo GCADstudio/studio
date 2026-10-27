@@ -1,0 +1,93 @@
+// minscad: a subset of the OpenSCAD language, rewritten into GCore by rewrite.toml.
+// Every minscad file is meant to be a valid OpenSCAD file with the same geometry.
+
+start: statement*
+
+?statement: ";"                                         -> empty
+          | "{" statement* "}"                          -> block
+          | NAME "=" expr ";"                           -> assignment
+          | "module" NAME "(" [params] ")" statement    -> module_def
+          | "function" NAME "(" [params] ")" "=" expr ";" -> function_def
+          | NAME "(" [arguments] ")" statement          -> instantiation
+          | "children" "(" [expr] ")" statement         -> children_stmt
+          | "if" "(" expr ")" statement ["else" statement] -> if_stmt
+          | "for" "(" bindings ")" statement            -> for_stmt
+          | "let" "(" [bindings] ")" statement          -> let_stmt
+          | "*" statement                               -> disabled
+          | "%" statement                               -> background
+          | "#" statement                               -> highlight
+          | "!" statement                               -> root
+          | "use" FILENAME                              -> use
+          | "include" FILENAME                          -> include
+
+params: param ("," param)* ","?
+param: NAME                                             -> param_plain
+     | NAME "=" expr                                    -> param_default
+
+arguments: argument ("," argument)* ","?
+argument: expr                                          -> pos_arg
+        | NAME "=" expr                                 -> named_arg
+
+bindings: binding ("," binding)* ","?
+binding: NAME "=" expr
+
+?expr: ternary
+     | "let" "(" [bindings] ")" expr                    -> let_expr
+     | "function" "(" [params] ")" expr                 -> lambda
+
+?ternary: or_expr
+        | or_expr "?" expr ":" expr                     -> cond
+
+?or_expr: and_expr
+        | or_expr "||" and_expr                         -> or
+?and_expr: eq_expr
+         | and_expr "&&" eq_expr                        -> and
+?eq_expr: rel_expr
+        | eq_expr "==" rel_expr                         -> eq
+        | eq_expr "!=" rel_expr                         -> ne
+?rel_expr: add_expr
+         | rel_expr "<" add_expr                        -> lt
+         | rel_expr "<=" add_expr                       -> le
+         | rel_expr ">" add_expr                        -> gt
+         | rel_expr ">=" add_expr                       -> ge
+?add_expr: mul_expr
+         | add_expr "+" mul_expr                        -> add
+         | add_expr "-" mul_expr                        -> sub
+?mul_expr: unary
+         | mul_expr "*" unary                           -> mul
+         | mul_expr "/" unary                           -> div
+         | mul_expr "%" unary                           -> mod
+?unary: power
+      | "-" unary                                       -> neg
+      | "+" unary
+      | "!" unary                                       -> not
+?power: postfix
+      | postfix "^" unary                               -> pow
+?postfix: primary
+        | postfix "(" [arguments] ")"                   -> call
+        | postfix "[" expr "]"                          -> index
+        | postfix "." NAME                              -> member
+?primary: NUMBER
+        | STRING
+        | NAME
+        | "true"                                        -> true
+        | "false"                                       -> false
+        | "undef"                                       -> undef
+        | "(" expr ")"
+        | "[" [items] "]"                               -> vector
+        | "[" expr ":" expr "]"                         -> range
+        | "[" expr ":" expr ":" expr "]"                -> range_step
+        | "[" "for" "(" bindings ")" expr "]"           -> list_for
+
+items: expr ("," expr)* ","?
+
+NAME: /\$?[A-Za-z_][A-Za-z0-9_]*/
+NUMBER: /(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/
+STRING: /"(\\.|[^"\\\n])*"/
+FILENAME: /<[^>\n]*>/
+
+LINE_COMMENT: /\/\/[^\n]*/
+BLOCK_COMMENT: /\/\*(.|\n)*?\*\//
+%ignore LINE_COMMENT
+%ignore BLOCK_COMMENT
+%ignore /\s+/

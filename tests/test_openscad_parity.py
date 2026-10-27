@@ -11,6 +11,8 @@ import trimesh
 from conftest import ok
 
 from gcad.backends import get_backend
+from gcad.kernels import BUNDLED, discover
+from gcad.pipeline import evaluate_source
 
 
 def find_openscad() -> str | None:
@@ -44,6 +46,11 @@ CASES = {
         "rotate_extrude($fn=64) translate([1,0]) square(1);",
         "(rotate_extrude (translate [1 0] (rect 1)) :$fn 64)",
     ),
+    # Positional cylinder(h, r1, r2): r2 defaults to 1, not to r1.
+    "cylinder_positional": (
+        "cylinder(10, 5, $fn=64);",
+        "(cylinder 10 5 :$fn 64)",
+    ),
     "polyhedron": (
         "polyhedron([[0,0,0],[10,0,0],[10,7,0],[0,7,0],[0,0,5],[10,0,5],[10,7,5],[0,7,5]],"
         "[[0,1,2,3],[4,5,1,0],[7,6,5,4],[5,6,2,1],[6,7,3,2],[7,4,0,3]]);",
@@ -72,3 +79,28 @@ def test_same_bounds_as_openscad(name: str, tmp_path: Path) -> None:
     assert np.allclose(np.concatenate(box), reference.bounds.ravel(), atol=1e-4)
     if name != "twist":  # one-slice twists are triangulated differently; bounds still agree
         assert model.volume() == pytest.approx(reference.volume, rel=1e-4)
+
+
+MINSCAD_EXAMPLES = sorted((BUNDLED / "minscad" / "examples").glob("*.mscad"))
+
+
+@pytest.mark.parametrize("path", MINSCAD_EXAMPLES, ids=lambda p: p.name)
+def test_minscad_examples_match_openscad(path: Path, tmp_path: Path) -> None:
+    """Every minscad example is also an OpenSCAD file; both must make the same solid.
+
+    $fn is fixed so that both use the same circle tessellation."""
+    text = "$fn = 64;\n" + path.read_text(encoding="utf-8")
+    src, stl = tmp_path / f"{path.stem}.scad", tmp_path / f"{path.stem}.stl"
+    src.write_text(text)
+    assert OPENSCAD is not None
+    subprocess.run(
+        [OPENSCAD, "-o", str(stl), str(src)], check=True, capture_output=True, timeout=300
+    )
+    reference = trimesh.load(stl, force="mesh")
+    evaluated = evaluate_source(text, path.name, discover()[0]["minscad"])
+    assert evaluated.result.ok and evaluated.result.graph is not None
+    model = get_backend("manifold").realize(evaluated.result.graph)
+    box = model.bounds()
+    assert box is not None
+    assert np.allclose(np.concatenate(box), reference.bounds.ravel(), atol=1e-4)
+    assert model.volume() == pytest.approx(reference.volume, rel=1e-5)

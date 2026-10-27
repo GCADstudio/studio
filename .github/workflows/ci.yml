@@ -52,7 +52,12 @@ jobs:
         shell: bash
         run: |
           gcad kernels
+          for kernel in csg minscad parts; do
+            gcad kernel check "src/gcad/kernels/$kernel"
+          done
           for fmt in stl obj glb; do
             gcad export src/gcad/kernels/csg/examples/bracket.gcsg -o "out/bracket.$fmt"
+            gcad export src/gcad/kernels/minscad/examples/flange.mscad -o "out/flange.$fmt"
+            gcad export src/gcad/kernels/parts/examples/plate.parts -o "out/plate.$fmt"
           done
           ls -l out
