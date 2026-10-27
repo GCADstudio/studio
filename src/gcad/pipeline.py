@@ -29,7 +29,12 @@ def evaluate_source(
     except GcadError as exc:
         return Evaluated(kernel, [], EvalResult(None, [exc.diagnostic]))
     metadata = {"title": Path(file).stem, "source": Path(file).name, "kernel": kernel.id}
-    return Evaluated(kernel, forms, evaluate(forms, limits, metadata, prelude))
+    result = evaluate(forms, limits, metadata, prelude, source)
+    try:
+        result.diagnostics.extend(kernel.check(source, file))
+    except GcadError as exc:
+        result.diagnostics.append(exc.diagnostic)
+    return Evaluated(kernel, forms, result)
 
 
 def evaluate_file(

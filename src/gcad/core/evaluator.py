@@ -9,6 +9,13 @@ Special forms:
     (if cond then [else])
     (for ((name list)...) body...)  list comprehension; several bindings nest
     (and a b...) (or a b...)        short-circuit logic
+    (letrec ((name expr)...) body...)
+                                    bindings in any order, each evaluated once, when first used;
+                                    a name bound twice or a cycle of references is an error.
+                                    Without a body its value is the list of every binding's value,
+                                    in order (SPEC FR-C8)
+    (at record body...)             geometry and diagnostics made by body are attributed to where
+                                    record was written, not to the prelude code that runs (FR-C9)
 
 A body is a block: its value is its single expression, or, when it has several, the list of
 shapes they produce (an implicit union, as in OpenSCAD).
@@ -29,6 +36,28 @@ from gcad.diagnostics import Diagnostic, GcadError, Severity, Span
 
 class Shapes(list[object]):
     """The value of a block with several shape expressions: an implicit group of children."""
+
+
+class Record(list[object]):
+    """A list that remembers where it was written: the value of `(record ...)`. It is a list in
+    every other respect; `at` attributes geometry and diagnostics to its span (FR-C9)."""
+
+    __slots__ = ("span",)
+
+    def __init__(self, items: list[object], span: Span | None) -> None:
+        super().__init__(items)
+        self.span = span
+
+
+class Thunk:
+    """A `letrec` binding not evaluated yet (FR-C8)."""
+
+    __slots__ = ("name", "expr", "env", "state", "value")
+
+    def __init__(self, name: Sym, expr: Expr, env: Env) -> None:
+        self.name, self.expr, self.env = name, expr, env
+        self.state = "pending"  # pending -> running -> done
+        self.value: object = None
 
 
 @dataclass
@@ -91,11 +120,13 @@ class EvalResult:
     @property
     def ok(self) -> bool:
         return self.graph is not None and not any(
-            d.severity is Severity.ERROR for d in self.diagnostics
+            d.severity is Severity.ERROR and d.origin != "check" for d in self.diagnostics
         )
 
 
-SPECIAL_FORMS = frozenset({"define", "module", "fn", "let", "if", "for", "and", "or"})
+SPECIAL_FORMS = frozenset(
+    {"define", "module", "fn", "let", "if", "for", "and", "or", "letrec", "at"}
+)
 
 
 def is_shape_list(value: object) -> bool:
@@ -146,6 +177,13 @@ class Evaluator:
         self.iterations = 0
         self.node_count = 0
         self.deadline = 0.0
+        #: the span geometry and diagnostics are attributed to inside `at`
+        self.attribution: Span | None = None
+        #: `letrec` names being evaluated, innermost last, to name a reference cycle
+        self.forcing: list[Thunk] = []
+        #: the source text, for `import-source`; set by run()
+        self.source = ""
+        self.blobs: dict[str, bytes] = {}
 
     # -- entry point ----------------------------------------------------------------------
 
@@ -154,9 +192,11 @@ class Evaluator:
         forms: list[Expr],
         metadata: dict[str, str] | None = None,
         prelude: list[Expr] | None = None,
+        source: str = "",
     ) -> EvalResult:
         """Evaluate a program. A kernel prelude gets its own scope between the built-ins and
         the program, so the program can redefine any name the prelude provides."""
+        self.source = source
         self.deadline = time.monotonic() + self.limits.max_seconds
         old_limit = sys.getrecursionlimit()
         sys.setrecursionlimit(max(old_limit, 40 * self.limits.max_depth + 1000))
@@ -175,7 +215,8 @@ class Evaluator:
                 root = shapes[0]
             else:
                 root = self.node("union", {}, shapes, None)
-            return EvalResult(Graph(root, metadata=dict(metadata or {})), self.diagnostics)
+            graph = Graph(root, metadata=dict(metadata or {}), blobs=dict(self.blobs))
+            return EvalResult(graph, self.diagnostics)
         except GcadError as exc:
             self.diagnostics.append(exc.diagnostic)
         except RecursionError:
@@ -200,10 +241,10 @@ class Evaluator:
     # -- helpers --------------------------------------------------------------------------
 
     def warn(self, message: str, span: Span | None) -> None:
-        self.diagnostics.append(Diagnostic(Severity.WARNING, message, span))
+        self.diagnostics.append(Diagnostic(Severity.WARNING, message, self.attribution or span))
 
     def info(self, message: str, span: Span | None) -> None:
-        self.diagnostics.append(Diagnostic(Severity.INFO, message, span))
+        self.diagnostics.append(Diagnostic(Severity.INFO, message, self.attribution or span))
 
     def tick(self, span: Span | None) -> None:
         if self.limits.stop is not None and self.limits.stop.is_set():
@@ -236,7 +277,7 @@ class Evaluator:
             if len(dims) > 1:
                 raise GcadError(f"'{op}' mixes 2D and 3D shapes", span)
             dim = dims.pop() if dims else 3
-        return make_node(op, args, children, dim, span)
+        return make_node(op, args, children, dim, self.attribution or span)
 
     # -- evaluation -----------------------------------------------------------------------
 
@@ -249,6 +290,8 @@ class Evaluator:
             found, value = env.lookup(expr.name)
             if not found:
                 raise GcadError(f"'{expr.name}' is not defined", expr.span)
+            if isinstance(value, Thunk):
+                return self.force(value, expr.span)
             return value
         if isinstance(expr, Kw):
             raise GcadError(f"keyword ':{expr.name}' outside a call", expr.span)
@@ -468,6 +511,60 @@ class Evaluator:
         loop(0, env)
         return out
 
+    def form_letrec(self, form: SList, env: Env) -> object:
+        local = Env(env)
+        thunks: list[Thunk] = []
+        pairs = self.bindings(form, "letrec")
+        for binding, (name, expr) in zip(form.items[1].items, pairs, strict=True):  # type: ignore[union-attr]
+            first = local.vars.get(name)
+            if isinstance(first, Thunk):
+                where = f" (first on line {first.name.span.line})" if first.name.span else ""
+                raise GcadError(f"'{name}' is defined twice{where}", binding.span)
+            thunk = Thunk(binding.items[0], expr, local)  # type: ignore[union-attr, arg-type]
+            local.vars[name] = thunk
+            thunks.append(thunk)
+        if len(form.items) > 2:
+            return self.block(form.items[2:], local)
+        return [self.force(t, t.name.span) for t in thunks]
+
+    def force(self, thunk: Thunk, span: Span | None) -> object:
+        if thunk.state == "done":
+            return thunk.value
+        if thunk.state == "running":
+            start = next(i for i, t in enumerate(self.forcing) if t is thunk)
+            chain = " -> ".join(t.name.name for t in [*self.forcing[start:], thunk])
+            raise GcadError(f"cyclic reference: {chain}", span)
+        self.tick(span)
+        thunk.state = "running"
+        self.forcing.append(thunk)
+        try:
+            thunk.value = self.eval(thunk.expr, thunk.env)
+        finally:
+            self.forcing.pop()
+            thunk.state = "pending"
+        thunk.state = "done"
+        thunk.expr = thunk.name  # let the source form go
+        return thunk.value
+
+    def form_at(self, form: SList, env: Env) -> object:
+        if len(form.items) < 3:
+            raise GcadError("expected (at record body...)", form.span)
+        target = self.eval(form.items[1], env)
+        span = target.span if isinstance(target, Record) else None
+        if span is None:
+            return self.block(form.items[2:], env)
+        outer = self.attribution
+        self.attribution = span
+        try:
+            return self.block(form.items[2:], env)
+        except GcadError as exc:
+            where = exc.diagnostic.span
+            if where is None or where.file != span.file:
+                raise GcadError(exc.diagnostic.message, span) from None
+            raise
+        finally:
+            self.attribution = outer
+
     def form_and(self, form: SList, env: Env) -> bool:
         return all(truthy(self.eval(e, env)) for e in form.items[1:])
 
@@ -504,5 +601,6 @@ def evaluate(
     limits: Limits | None = None,
     metadata: dict[str, str] | None = None,
     prelude: list[Expr] | None = None,
+    source: str = "",
 ) -> EvalResult:
-    return Evaluator(limits).run(forms, metadata, prelude)
+    return Evaluator(limits).run(forms, metadata, prelude, source)

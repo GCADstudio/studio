@@ -12,7 +12,8 @@ anonymous punctuation; an optional part that did not match (`[...]`) is an absen
 
 A template may hold several forms (they are spliced into the parent) or none (the node
 disappears). [tokens] maps terminal names to number, string, symbol, keyword or text;
-unlisted terminals are guessed from their names.
+unlisted terminals are guessed from their names. A string is read with JSON escapes, or with a
+named decoder: `string:iso10303-21` reads ISO 10303-21 strings ('it''s', \\X2\\...\\X0\\).
 """
 
 from __future__ import annotations
@@ -41,6 +42,20 @@ from gcad.diagnostics import GcadError, Span
 PLACEHOLDER = re.compile(r"^\$(?:(\d+)(\*|:str|:sym|:num)?|\*)$")
 KEYWORD_PLACEHOLDER = re.compile(r"^\$(\d+)$")
 TOKEN_KINDS = ("number", "string", "symbol", "keyword", "text")
+
+
+def _iso10303_21(text: str) -> str:
+    from gcad.iso10303._nxstyle.p21 import P21Error, decode_string
+
+    try:
+        # Line breaks are not part of the exchange structure, even inside a string (annex A).
+        return str(decode_string(text[1:-1].replace("\r", "").replace("\n", "")))
+    except (P21Error, IndexError, ValueError) as exc:
+        raise ValueError(str(exc)) from None
+
+
+#: decoders for `string:<name>` tokens: quoted source text -> the string's value
+STRING_DECODERS = {"iso10303-21": _iso10303_21}
 
 Child = Tree | Token | None
 
@@ -101,8 +116,17 @@ class GrammarKernel:
             self.templates[name] = self._compile_template(name, text)
         self.token_kinds: dict[str, str] = {}
         for name, kind in tokens.items():
-            if kind not in TOKEN_KINDS:
-                kinds = ", ".join(TOKEN_KINDS)
+            base, _, decoder = str(kind).partition(":")
+            if (
+                base not in TOKEN_KINDS
+                or (decoder and (base, decoder) != ("string", decoder))
+                or (decoder and decoder not in STRING_DECODERS)
+            ):
+                kinds = (
+                    ", ".join(TOKEN_KINDS)
+                    + ", "
+                    + ", ".join(f"string:{d}" for d in STRING_DECODERS)
+                )
                 raise GcadError(f"kernel '{kernel_id}': token {name} kind must be one of {kinds}")
             self.token_kinds[name] = kind
         self.file = ""
@@ -212,6 +236,11 @@ class GrammarKernel:
                 return Num(float(text), span)
             except ValueError:
                 raise GcadError(f"invalid number {text!r}", span) from None
+        if kind.startswith("string:"):
+            try:
+                return Str(STRING_DECODERS[kind[7:]](text), span)
+            except ValueError as exc:
+                raise GcadError(f"invalid string literal: {exc}", span) from None
         if kind == "string":
             try:
                 value = json.loads(text) if text.startswith('"') else text
@@ -333,7 +362,7 @@ class GrammarKernel:
                 "comment"
                 if term.name in ignored
                 else self.token_kinds.get(term.name) or guess_token_kind(term.name)
-            )
+            ).partition(":")[0]
             if not term.name.startswith("__"):
                 tokens[term.name] = kind
             if kind != "comment" or not re.fullmatch(
