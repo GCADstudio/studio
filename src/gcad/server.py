@@ -136,7 +136,6 @@ class Studio:
 
     def rpc_file_list(self) -> dict[str, object]:
         kernels, _ = discover()
-        extensions = {ext: k.id for k in kernels.values() for ext in k.extensions}
         examples = [
             {"path": f"{EXAMPLE_PREFIX}{k.id}/examples/{p.name}", "name": p.name, "kernel": k.id}
             for k in kernels.values()
@@ -152,12 +151,12 @@ class Studio:
             # Prune hidden and generated folders before descending (a .venv has thousands).
             dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in skip)
             for name in sorted(names):
-                lower = name.lower()
-                matches = [e for e in extensions if lower.endswith(e)]
-                if matches:  # the longest extension wins: .cq.py before .py
+                # The best match wins: an exact file name, then the longest extension
+                # (.cq.py before .py).
+                best = max(kernels.values(), key=lambda k: k.matches(Path(name)), default=None)
+                if best is not None and best.matches(Path(name)):
                     rel = Path(folder, name).relative_to(self.root).as_posix()
-                    kernel_id = extensions[max(matches, key=len)]
-                    files.append({"path": rel, "name": name, "kernel": kernel_id})
+                    files.append({"path": rel, "name": name, "kernel": best.id})
             if len(files) >= 500:
                 break
         return {"root": str(self.root), "files": files, "examples": examples}

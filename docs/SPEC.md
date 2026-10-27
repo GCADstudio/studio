@@ -123,7 +123,7 @@ A kernel is a folder; no Python is required:
 
 ```
 kernels/minscad/
-  kernel.toml     id, display name, version, file extensions, comment syntax, start rule, parser (gcore|earley|lalr)
+  kernel.toml     id, display name, version, file extensions or names, comment syntax, start rule, parser (gcore|earley|lalr)
   grammar.lark    Lark EBNF grammar of the surface language
   rewrite.toml    [rules]: one GCore template per tree name; [tokens]: how terminals become GCore atoms
   prelude.gcore   optional GCore definitions evaluated in their own scope (e.g. OpenSCAD's cube -> box)
@@ -145,7 +145,7 @@ range_step = "(range $1 $3 $2)"
 |---|---|---|
 | FR-K1 | M | Grammar notation is Lark EBNF, loaded at run time (Earley for any context-free grammar, LALR(1) when declared for speed). No parser generation step. |
 | FR-K2 | M | Rewrite rules are declarative templates; a kernel that is only `kernel.toml`, `grammar.lark` and `rewrite.toml` works. |
-| FR-K3 | M | Dropping a kernel folder into the kernel path (`./kernels`, user config dir, or `GCAD_KERNEL_PATH`) makes it available to the next CLI command and to the UI after a kernel reload. |
+| FR-K3 | M | Dropping a kernel folder into the kernel path (`./kernels`, user config dir, or `GCAD_KERNEL_PATH`) makes it available to the next CLI command and to the UI after a kernel reload. A kernel claims files by extension (`extensions`), by exact file name (`filenames`, for files that have no extension, as editors treat `Makefile`), or both. File names match exactly and case-sensitively, so `Name.orig` or `myName` is not `Name`; an exact name outranks any extension, and otherwise the longest extension wins (`.cq.py` before `.py`). |
 | FR-K4 | M | `gcad kernel check <dir>` validates the manifest, compiles the grammar, checks that every tree the grammar can produce has a rewrite rule (and warns about rules that match nothing), reads the prelude, and runs `examples/`. |
 | FR-K5 | M | Syntax highlighting is derived from the grammar: word literals become keywords, other literals operators, ignored terminals comments, and named terminals take the classes in `rewrite.toml [tokens]`. `gcad kernel describe <id>` prints them for an editor. |
 | FR-K6 | S | Optional `transform.py` escape hatch for semantics templates cannot express. Such kernels are marked **trusted-only** and the UI asks before loading one from an untrusted folder. |

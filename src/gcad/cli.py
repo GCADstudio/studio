@@ -34,6 +34,7 @@ def cmd_kernels(args: argparse.Namespace) -> int:
                 "name": k.name,
                 "version": k.version,
                 "extensions": list(k.extensions),
+                "filenames": list(k.filenames),
                 "parser": k.parser,
             }
             for k in kernels.values()
@@ -41,7 +42,7 @@ def cmd_kernels(args: argparse.Namespace) -> int:
         print(json.dumps(rows, indent=2))
         return 0
     for k in kernels.values():
-        print(f"{k.id:<12} {k.version:<8} {' '.join(k.extensions):<14} {k.name}")
+        print(f"{k.id:<12} {k.version:<8} {' '.join(k.extensions + k.filenames):<14} {k.name}")
         if k.is_process:
             from gcad.kernels.process import unavailable_reason
 

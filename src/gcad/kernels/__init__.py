@@ -33,7 +33,7 @@ from gcad.kernels.grammar import GrammarKernel, load_grammar_kernel
 
 BUNDLED = Path(__file__).parent
 PARSERS = ("gcore", "earley", "lalr", "process")
-REQUIRED = ("id", "name", "version", "extensions", "parser")
+REQUIRED = ("id", "name", "version", "parser")
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,8 @@ class Kernel:
     comment: str
     path: Path
     description: str = ""
+    #: exact, case-sensitive file names the kernel claims, for files without an extension
+    filenames: tuple[str, ...] = ()
     start: str = "start"
     #: process kernels: the program to start, with {python}, {kernel} and {env:NAME} fields
     command: tuple[str, ...] = ()
@@ -67,7 +69,10 @@ class Kernel:
         return self.path.resolve().is_relative_to(BUNDLED.resolve())
 
     def matches(self, path: Path) -> int:
-        """Length of the longest extension of this kernel that `path` ends with, else 0."""
+        """How well `path` fits this kernel, 0 for not at all: the length of the longest
+        extension it ends with, or more than any extension can score for an exact file name."""
+        if path.name in self.filenames:
+            return len(path.name) + 1
         name = path.name.lower()
         return max((len(e) for e in self.extensions if name.endswith(e)), default=0)
 
@@ -95,6 +100,7 @@ class Kernel:
             "name": self.name,
             "version": self.version,
             "extensions": list(self.extensions),
+            "filenames": list(self.filenames),
             "parser": self.parser,
             "comment": self.comment,
         }
@@ -150,13 +156,18 @@ def load_kernel(folder: Path) -> Kernel:
         raise GcadError(f"{manifest}: missing {', '.join(missing)}")
     if data["parser"] not in PARSERS:
         raise GcadError(f"{manifest}: parser must be one of {', '.join(PARSERS)}")
-    exts = data["extensions"]
-    if (
-        not isinstance(exts, list)
-        or not exts
-        or not all(isinstance(e, str) and e.startswith(".") for e in exts)
+    exts = data.get("extensions", [])
+    if not isinstance(exts, list) or not all(
+        isinstance(e, str) and e.startswith(".") for e in exts
     ):
         raise GcadError(f'{manifest}: extensions must be a list like [".ext"]')
+    names = data.get("filenames", [])
+    if not isinstance(names, list) or not all(
+        isinstance(n, str) and n and "/" not in n and "\\" not in n for n in names
+    ):
+        raise GcadError(f'{manifest}: filenames must be a list of file names like ["Name"]')
+    if not exts and not names:
+        raise GcadError(f"{manifest}: give extensions, filenames or both")
     process = data.get("process", {})
     command = process.get("command", []) if isinstance(process, dict) else None
     if data["parser"] == "process" and (
@@ -175,6 +186,7 @@ def load_kernel(folder: Path) -> Kernel:
         comment=str(data.get("comment", "")),
         path=folder,
         description=str(data.get("description", "")),
+        filenames=tuple(names),
         start=str(data.get("start", "start")),
         command=tuple(command or ()),
         setup=str(process.get("setup", "")) if isinstance(process, dict) else "",
@@ -271,5 +283,6 @@ def kernel_for(path: Path, kernel_id: str | None = None) -> Kernel:
         return kernels[kernel_id]
     best = max(kernels.values(), key=lambda k: k.matches(path), default=None)
     if best is None or not best.matches(path):
-        raise GcadError(f"no kernel handles '{path.suffix.lower()}' files; pass --kernel")
+        what = f"'{path.suffix.lower()}' files" if path.suffix else f"files named '{path.name}'"
+        raise GcadError(f"no kernel handles {what}; pass --kernel")
     return best
