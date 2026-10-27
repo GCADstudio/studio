@@ -10,7 +10,10 @@ out.json then holds, per file, the volumes of the rebuilt solids, the parameters
 spreadsheet received, and for "ac2" the volume after hole_d is set to 10 mm.
 """
 
-import json, os, sys, traceback
+import json
+import os
+import sys
+import traceback
 
 out = os.environ["GCAD_FC_OUT"]
 res = {}
