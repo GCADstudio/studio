@@ -1,5 +1,6 @@
 """Round-trip every exporter through an independent reader (SPEC EX-6, AC-3 for M1 formats)."""
 
+import importlib.util
 import json
 import math
 import struct
@@ -90,22 +91,35 @@ def test_2d_model_is_refused_by_mesh_formats(tmp_path: Path) -> None:
         export_file(src, tmp_path / "plate.stl")
 
 
-def test_brep_formats_are_refused_until_m3(test_part: Path, tmp_path: Path) -> None:
-    with pytest.raises(Exception, match="milestone M3"):
-        export_file(test_part, tmp_path / "part.step")
+def test_brep_formats_are_refused_by_the_mesh_backend(test_part: Path, tmp_path: Path) -> None:
+    with pytest.raises(Exception, match="needs exact geometry"):
+        export_file(test_part, tmp_path / "part.step", backend_name="manifold")
 
 
-def test_exports_are_byte_identical_across_processes(examples: Path, tmp_path: Path) -> None:
-    """SPEC AC-7 for the M1 formats: two separate runs give the same bytes."""
+def test_2d_formats_are_reported_as_planned(test_part: Path, tmp_path: Path) -> None:
+    with pytest.raises(Exception, match="milestone M4"):
+        export_file(test_part, tmp_path / "part.dxf")
+
+
+def test_exports_are_byte_identical_across_processes(
+    examples: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPEC AC-7: with SOURCE_DATE_EPOCH set, two separate runs give the same bytes."""
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1767225600")
     src = examples / "flange.gcsg"
+    formats = ["stl", "obj", "glb", "x3d", "wrl", "dae", "unv"]
+    if importlib.util.find_spec("OCP") is not None:
+        formats += ["step", "igs"]
     runs = []
     for i in range(2):
         folder = tmp_path / f"run{i}"
-        for fmt in ("stl", "obj", "glb"):
+        for fmt in formats:
             subprocess.run(
                 [sys.executable, "-m", "gcad", "export", str(src), "-o", str(folder / f"f.{fmt}")],
                 check=True,
                 capture_output=True,
             )
         runs.append({p.name: p.read_bytes() for p in sorted(folder.iterdir())})
-    assert runs[0] == runs[1]
+    assert sorted(runs[0]) == sorted([f"f.{f}" for f in formats] + ["f.mtl"])
+    for name in runs[0]:
+        assert runs[0][name] == runs[1][name], name

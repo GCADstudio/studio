@@ -22,6 +22,9 @@ classifiers = [
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    # Exact B-rep back-end (STEP, IGES). There is no build for Windows on ARM; there the
+    # studio runs on the Manifold mesh back-end alone (SPEC NFR-1).
+    "cadquery-ocp>=8.0.1; sys_platform != 'win32' or platform_machine != 'ARM64'",
     "lark>=1.2",
     "manifold3d>=3.2",
     "numpy>=1.26",
@@ -32,7 +35,13 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
     "mypy>=1.11",
+    # independent readers used to check exports (EX-6)
     "trimesh>=4",
+    "pycollada>=0.8",
+    "pyuff>=2.4",
+    "steputils>=0.1",
+    "pymeshlab>=2023.12; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "gmsh>=4.11; (sys_platform != 'linux' or platform_machine == 'x86_64') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
 ]
 
 [project.scripts]
@@ -65,5 +74,6 @@ warn_unused_ignores = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["manifold3d", "manifold3d.*"]
+module = ["manifold3d", "manifold3d.*", "OCP", "OCP.*"]
 ignore_missing_imports = true
+follow_imports = "skip"

@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0, M1 and M2 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M3 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -145,10 +145,11 @@ FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stab
 | ID | Pri | Requirement |
 |---|---|---|
 | FR-B1 | M | Back-end interface: `realize(graph) → shape`, `tessellate(shape, tolerance) → mesh with per-triangle node id`, `bounds`, `volume`, `area`, `is_valid`, `section(plane) → 2D curves`. |
-| FR-B2 | M | Back-end **B** (OpenCASCADE via OCP): exact B-rep; required for STEP, IGES and analytic 2D sections. |
+| FR-B2 | M | Back-end **B** (OpenCASCADE via OCP): exact B-rep; required for STEP, IGES and analytic 2D sections. As built in M3 (OCCT 8.0 through `cadquery-ocp`): curved primitives are analytic; a cylinder or circle with an explicit `$fn` of 3 to 16 is the polygon OpenSCAD would make (hex nuts stay hexagons); twisted or scaled extrusions are lofts through the slices; non-uniform scaling turns surfaces into splines. The whole model carries one colour and name, taken from its outermost `color`/`name`; per-face colours need boolean history and are not done yet. |
 | FR-B3 | M | Back-end **M** (Manifold): guaranteed-manifold mesh booleans; used where OCP has no wheel (Windows on ARM today) and as a fast preview option. |
 | FR-B4 | M | A format that needs exact geometry is refused on back-end M with a clear diagnostic. A STEP file of triangles is never produced silently. |
 | FR-B5 | M | Tessellation tolerance: linear deflection default 0.1 % of the bounding-box diagonal, angular 0.5 rad, both overridable per export and by `$fn/$fa/$fs` hints. |
+| FR-B7 | M | Back-end `auto` (the default, added in M3) uses B for formats that need exact geometry and M for mesh formats, so mesh exports keep Manifold's per-triangle provenance and speed. `--backend` overrides it. |
 | FR-B6 | S | `projection` with hidden-line removal on back-end B for 2D drawing views. |
 
 ## 6. Functional requirements: user interface and CLI
@@ -186,14 +187,14 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 
 | Format | Standard / version | Ext | Source | Implementation | Pri | Verified by |
 |---|---|---|---|---|---|---|
-| STEP | ISO 10303-21, AP214 default, AP242 option | `.step .stp` | B-rep | OCCT `STEPControl_Writer` | M | Re-read with OCCT; one valid solid per body; volume equals analytic value within 1e-6 relative; units read back as mm |
-| IGES | IGES 5.3 | `.iges .igs` | B-rep | OCCT `IGESControl_Writer` (B-rep mode, entity 186) | M | Re-read with OCCT; volume as STEP |
+| STEP | ISO 10303-21, AP214 default, AP242 option | `.step .stp` | B-rep | OCCT `STEPCAFControl_Writer` (product name and colour via XCAF) | M | Re-read with OCCT; one valid solid per body; volume equals analytic value within 1e-6 relative; units read back as mm. As built: also parsed by `steputils` (an independent Part 21 parser) |
+| IGES | IGES 5.3 | `.iges .igs` | B-rep | OCCT `IGESControl_Writer` (B-rep mode, entity 186); global-section dates patched to the export time | M | Re-read with OCCT; volume as STEP |
 | STL | 3D Systems STL, binary and ASCII | `.stl` | mesh | Own writer, explicit little-endian | M | `trimesh` re-read; watertight; triangle count matches header; volume within 0.5 % of B-rep volume |
 | OBJ | Wavefront OBJ + MTL for colour | `.obj .mtl` | mesh | Own writer | M | `trimesh` re-read; face and vertex counts |
-| X3D | ISO/IEC 19775-1 / 19776-1, X3D 3.3 XML encoding | `.x3d` | mesh | Own writer, `IndexedFaceSet` | M | Validate against the X3D 3.3 XML schema; triangle count |
-| VRML | ISO/IEC 14772-1 (VRML97) | `.wrl` | mesh | Own writer, `IndexedFaceSet` | M | Re-read with OCCT VRML reader; triangle count |
-| COLLADA | COLLADA 1.4.1 (ISO/PAS 17506) | `.dae` | mesh | Own writer | M | Validate against the COLLADA 1.4.1 schema; re-read with `pycollada` |
-| UNV | I-DEAS Universal: datasets 164 (units), 2411 (nodes), 2412 (elements) | `.unv` | mesh | Own writer; surface triangles (FE type 91) | M | Re-read with Gmsh where available; node and element counts |
+| X3D | ISO/IEC 19775-1 / 19776-1, X3D 3.3 XML encoding | `.x3d` | mesh | Own writer, `IndexedTriangleSet`; mm declared by the UNIT statement; +Z turned to X3D's +Y | M | Validate against the X3D 3.3 XML schema; triangle count. As built: schema-valid (checked locally, the schema is fetched online); MeshLab re-read in CI: triangle count, watertight, volume |
+| VRML | ISO/IEC 14772-1 (VRML97) | `.wrl` | mesh | Own writer, `IndexedFaceSet`; metres and +Y up by the VRML convention, via one Transform | M | As built: MeshLab re-read (the OCCT VRML reader was not needed): triangle count, watertight, volume in m³ |
+| COLLADA | COLLADA 1.4.1 (ISO/PAS 17506) | `.dae` | mesh | Own writer; mm and Z_UP declared in `<asset>` | M | Validate against the COLLADA 1.4.1 schema; re-read with `pycollada`. As built: schema-valid (checked locally); pycollada and MeshLab in CI |
+| UNV | I-DEAS Universal: datasets 164 (units), 2411 (nodes), 2412 (elements) | `.unv` | mesh | Own writer; surface triangles (FE type 91); units code 5 (mm) | M | Re-read with Gmsh where available; node and element counts. As built: pyuff (pure Python, every platform) and Gmsh; volume from the re-read mesh |
 | glTF | glTF 2.0 binary | `.glb` | mesh | Own writer (also the viewer feed) | M | glTF validator; re-read with `trimesh` |
 | DXF | AutoCAD DXF, R2000 (AC1015) default, R12 option | `.dxf` | 2D | `ezdxf` | M | `ezdxf` audit with zero errors; every vertex read back equals the source in mm |
 | SVG | SVG 1.1 Second Edition | `.svg` | 2D | Own writer, 1 user unit = 1 mm, `width/height` in mm | M | XML well-formed; rendered and inspected; dimensions in mm |
@@ -230,7 +231,7 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 | NFR-3 | M | **Python:** the version range is pinned to the intersection of the `cadquery-ocp` and `manifold3d` wheel tags at implementation time (expected 3.11–3.13). |
 | NFR-4 | M | **Install:** `pip install gcad-studio` or `uv tool install gcad-studio`; no compiler, no admin rights, no network after install. |
 | NFR-5 | M | **Security:** server binds to 127.0.0.1 only and requires the session token; grammar kernels are data; trusted-only kernels need explicit consent; evaluation limits per FR-C6. |
-| NFR-6 | M | **Licence:** AGPL-3.0 for GCAD Studio. Dependencies must be AGPL-compatible: Lark (MIT), OCP (Apache-2.0) with OCCT (LGPL-2.1 with exception), Manifold (Apache-2.0), ezdxf (MIT), three.js (MIT), CodeMirror (MIT), Gmsh (GPLv2+, optional). No proprietary SDK is bundled. |
+| NFR-6 | M | **Licence:** AGPL-3.0 for GCAD Studio. Dependencies must be AGPL-compatible: Lark (MIT), OCP (Apache-2.0) with OCCT (LGPL-2.1 with exception), Manifold (Apache-2.0), ezdxf (MIT), three.js (MIT), CodeMirror (MIT), Gmsh (GPLv2+, optional). No proprietary SDK is bundled. Test-only readers, installed with the `dev` extra and never distributed: pymeshlab (GPL-3.0), pycollada (BSD), pyuff (MIT), Gmsh. |
 | NFR-7 | S | **Performance targets** on a 4-core laptop CPU without GPU: parse + evaluate the bundled examples in < 200 ms; preview update < 1 s for a model with ≤ 100 boolean operations on back-end M and < 3 s on back-end B. |
 | NFR-8 | M | **Quality gates:** `ruff` and type checks on Python; unit tests for GCore, rewrite engine and each exporter; golden-file tests stored under `tests/golden/` (the repo's `.gitignore` ignores `*.obj`, so OBJ goldens need a negated rule or a different extension). |
 | NFR-9 | M | **CI matrix** (GitHub Actions): `ubuntu-latest`, `ubuntu-24.04-arm`, `windows-latest`, `windows-11-arm` (back-end M), `macos-latest` (arm64), and `macos-15-intel` (x86_64). Every job runs the CLI export suite; one job also opens the UI headless and checks the viewer loads a model. |

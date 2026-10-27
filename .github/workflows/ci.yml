@@ -55,9 +55,21 @@ jobs:
           for kernel in csg minscad parts; do
             gcad kernel check "src/gcad/kernels/$kernel"
           done
-          for fmt in stl obj glb; do
+          gcad formats
+          for fmt in stl obj glb x3d wrl dae unv; do
             gcad export src/gcad/kernels/csg/examples/bracket.gcsg -o "out/bracket.$fmt"
             gcad export src/gcad/kernels/minscad/examples/flange.mscad -o "out/flange.$fmt"
             gcad export src/gcad/kernels/parts/examples/plate.parts -o "out/plate.$fmt"
           done
+          if python -c "import OCP" 2>/dev/null; then
+            for fmt in step igs; do
+              gcad export src/gcad/kernels/minscad/examples/flange.mscad -o "out/flange.$fmt"
+            done
+          else
+            # SPEC AC-6: no OpenCASCADE build here; exact formats must say why
+            if gcad export src/gcad/kernels/minscad/examples/flange.mscad -o out/flange.step 2> err.txt; then
+              echo "STEP export should have failed without OpenCASCADE"; exit 1
+            fi
+            grep "no build for this platform" err.txt
+          fi
           ls -l out

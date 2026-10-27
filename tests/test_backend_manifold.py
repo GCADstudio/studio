@@ -1,4 +1,5 @@
 import math
+import sys
 
 import numpy as np
 import pytest
@@ -107,6 +108,8 @@ def test_triangles_trace_back_to_nodes_and_colours() -> None:
     assert len(mesh.tri_group) == mesh.triangle_count
 
 
-def test_occt_backend_is_reported_as_planned() -> None:
-    with pytest.raises(GcadError, match="M3"):
+def test_occt_unavailable_is_reported_clearly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """SPEC AC-6: where OpenCASCADE has no build, B-rep formats say why instead of failing."""
+    monkeypatch.setitem(sys.modules, "OCP", None)
+    with pytest.raises(GcadError, match="no build for this platform"):
         get_backend("occt")

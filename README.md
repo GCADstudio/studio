@@ -4,22 +4,22 @@ A language-agnostic, code-first CAD studio: what Jupyter did for IPython, GCAD S
 
 ## Status
 
-Pre-alpha. Milestones M0, M1 and M2 of [the plan](docs/SPEC.md#12-delivery-plan) are done:
+Pre-alpha. Milestones M0 to M3 of [the plan](docs/SPEC.md#12-delivery-plan) are done:
 
 | Works now | Planned |
 |---|---|
-| GCore language and evaluator with source spans, limits and diagnostics | M3: exact B-rep back-end (OpenCASCADE): STEP, IGES; X3D, VRML, COLLADA, UNV |
-| Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python | M4: 2D sections; DXF, SVG, PDF, EPS, CGM |
-| Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) | M5: browser studio (editor, 3D viewer, console) |
-| Mesh back-end on [Manifold](https://github.com/elalish/manifold), CPU only | M6: release |
-| Export: STL (binary/ASCII), OBJ + MTL, glTF 2.0 binary | |
+| GCore language and evaluator with source spans, limits and diagnostics | M4: 2D sections; DXF, SVG, PDF, EPS, CGM |
+| Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python | M5: browser studio (editor, 3D viewer, console) |
+| Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) | M6: release |
+| Exact B-rep back-end on [OpenCASCADE](https://dev.opencascade.org); mesh back-end on [Manifold](https://github.com/elalish/manifold); both CPU only | |
+| Export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV | |
 | `gcad` command line, headless | |
 
 Run `gcad formats` to see every format and its milestone.
 
 ## Install
 
-Python 3.11 or newer on Windows, macOS or Linux, x86_64 or arm64. No compiler or GPU is needed.
+Python 3.11 or newer on Windows, macOS or Linux, x86_64 or arm64. No compiler or GPU is needed. OpenCASCADE comes as the `cadquery-ocp` wheel, which does not exist for Windows on ARM; there the studio runs without STEP and IGES and says so.
 
 ```bash
 pip install -e ".[dev]"
@@ -63,8 +63,10 @@ In `csg`, S-expressions that are GCore itself, `part.gcsg`:
 gcad eval part.mscad                    # check it: diagnostics and a graph summary
 gcad eval part.mscad --dump gcore       # what the kernel rewrote it into
 gcad eval part.mscad --dump graph       # the language-neutral geometry graph as JSON
-gcad export part.mscad -o part.stl      # also .obj or .glb; --ascii for ASCII STL
+gcad export part.mscad -o part.step     # exact B-rep; also .igs; --schema AP242
+gcad export part.mscad -o part.stl      # meshes: .stl .obj .glb .x3d .wrl .dae .unv
 gcad export part.mscad -o part.glb --tol 0.01  # finer tessellation (mm)
+gcad formats                            # every format, and which back-ends are available
 gcad kernels                            # languages on the kernel search path
 ```
 
@@ -87,7 +89,18 @@ gcad kernel describe path/to/kernel     # keywords and token classes for an edit
 
 ## Exports and units
 
-Documents are in millimetres. STL and OBJ have no unit field (OBJ carries a comment). glTF is metres and Y-up by definition, so the vertex data stays in millimetres and the root node holds the 0.001 scale and Z-up to Y-up turn. Exports are deterministic: the same source gives byte-identical files.
+STEP and IGES come from the exact OpenCASCADE back-end: cylinders, cones, spheres and revolutions are true analytic surfaces, so a STEP part is a B-rep solid, not a mesh (checked by re-reading with OpenCASCADE and parsing with the independent `steputils`; other CAD systems have not been tried yet). Mesh formats come from Manifold unless you pass `--backend occt`. A cylinder with an explicit `$fn` of 3 to 16 stays the polygon OpenSCAD would make, so hex nuts stay hexagonal in STEP too.
+
+Documents are in millimetres, and each format is written by its own convention:
+
+| Format | Units and axes |
+|---|---|
+| STEP, IGES, COLLADA, UNV | millimetres declared in the file; +Z up |
+| X3D | millimetres declared by the X3D 3.3 UNIT statement; turned so +Z points along X3D's +Y up |
+| glTF, VRML | metres and +Y up by definition: vertex data stays in mm, one root transform scales by 0.001 and turns the model |
+| STL, OBJ | no unit field: millimetres (OBJ says so in a comment) |
+
+Exports are reproducible: the same source gives byte-identical files. STEP, IGES and COLLADA contain a date; set `SOURCE_DATE_EPOCH` or `--epoch` to fix it. STEP and IGES headers never contain your user name or organisation.
 
 ## Development
 

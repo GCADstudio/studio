@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from gcad.backends import get_backend
+from gcad.backends import select_backend
 from gcad.core.evaluator import EvalResult, Limits, evaluate
 from gcad.core.sexpr import Expr
 from gcad.diagnostics import GcadError
@@ -47,6 +47,7 @@ def evaluate_file(
 class ExportReport:
     files: list[Path]
     format_name: str
+    backend: str
     triangles: int | None
     volume: float
 
@@ -56,19 +57,23 @@ def export_file(
     out: Path,
     fmt_id: str | None = None,
     kernel_id: str | None = None,
-    backend_name: str = "manifold",
+    backend_name: str = "auto",
     tolerance: float | None = None,
     options: dict[str, object] | None = None,
 ) -> tuple[Evaluated, ExportReport | None]:
+    """Evaluate a source file and export it. `auto` uses the exact B-rep back-end for
+    formats that need exact geometry and the mesh back-end otherwise."""
+    fmt = format_for(out, fmt_id)
+    if not fmt.available:
+        raise GcadError(f"{fmt.name} export is specified but arrives in milestone {fmt.milestone}")
     evaluated = evaluate_file(path, kernel_id)
     graph = evaluated.result.graph
     if not evaluated.result.ok or graph is None:
         return evaluated, None
-    fmt = format_for(out, fmt_id)
-    backend = get_backend(backend_name)
+    backend = select_backend(backend_name, fmt.needs)
     model = backend.realize(graph, tolerance)
     if not model.is_valid():
-        raise GcadError("the back-end produced an invalid model")
+        raise GcadError(f"back-end '{backend.name}' produced an invalid model")
     files = export(ExportJob(model, graph, out, dict(options or {})), fmt, backend.capabilities)
     triangles = model.mesh().triangle_count if fmt.needs == "mesh" else None
-    return evaluated, ExportReport(files, fmt.name, triangles, model.volume())
+    return evaluated, ExportReport(files, fmt.name, backend.name, triangles, model.volume())
