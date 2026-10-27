@@ -42,7 +42,8 @@ dev = [
     "pyuff>=2.4",
     "steputils>=0.1",
     "svgelements>=1.9",
-    "pdfminer.six>=20231228",
+    # pdfminer.six needs cryptography, which has no Windows-on-ARM wheel
+    "pdfminer.six>=20231228; sys_platform != 'win32' or platform_machine != 'ARM64'",
     "pymeshlab>=2023.12; sys_platform != 'win32' or platform_machine != 'ARM64'",
     "gmsh>=4.11; (sys_platform != 'linux' or platform_machine == 'x86_64') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
 ]

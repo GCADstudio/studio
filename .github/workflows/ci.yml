@@ -24,6 +24,7 @@ jobs:
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -46,9 +47,15 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: System libraries for the test-only readers (MeshLab, Gmsh, Ghostscript)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libopengl0 libglu1-mesa ghostscript
+        run: |
+          # man-db rebuilds its index after every package and makes apt take minutes
+          echo "set man-db/auto-update false" | sudo debconf-set-selections
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libopengl0 libglu1-mesa ghostscript
       - name: LibreOffice, the independent CGM and DXF reader (one job)
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        timeout-minutes: 15
         run: |
           sudo apt-get install -y --no-install-recommends libreoffice-draw libreoffice-impress
           echo "GCAD_REQUIRE_LIBREOFFICE=1" >> "$GITHUB_ENV"
