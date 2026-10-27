@@ -769,6 +769,13 @@ def b_resolve(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> ob
     return value
 
 
+def b_contains(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> bool:
+    """(contains list value): whether the list holds an element equal to value."""
+    if len(args) != 2 or not isinstance(args[0], list):
+        raise GcadError("'contains' takes a list and a value", ctx.span)
+    return any(_equal(x, args[1]) for x in args[0])
+
+
 def b_apply(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> object:
     """(apply f list): call f with the list's items as its positional arguments."""
     if len(args) != 2 or not isinstance(args[1], list):
@@ -914,6 +921,7 @@ def global_env() -> Env:
         "record": b_record,
         "resolve": b_resolve,
         "apply": b_apply,
+        "contains": b_contains,
         "split": _text_fn("split", 2, lambda s, sep: s.split(sep)),
         "upper": _text_fn("upper", 1, str.upper),
         "lower": _text_fn("lower", 1, str.lower),

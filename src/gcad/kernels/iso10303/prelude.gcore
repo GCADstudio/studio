@@ -22,8 +22,9 @@
 (define (partials r)
   (if (complex? r) (for ((i (range 2 (- (len r) 1)))) (get r i)) [r]))
 (define (part r name) (first (filter (partials r) (fn (p) (== (kw p) name)))))
-(define (is r name) (and (is_record r) (not (is_undef (part r name)))))
-(define (is-any r names) (any names (fn (n) (is r n))))
+(define (kinds r) (if (complex? r) (for ((p (partials r))) (kw p)) [(kw r)]))
+(define (is r name) (and (is_record r) (or (== (kw r) name) (and (complex? r) (contains (kinds r) name)))))
+(define (is-any r names) (and (is_record r) (any (kinds r) (fn (k) (contains names k)))))
 ; a typed parameter's value: LENGTH_MEASURE(5.) -> 5
 (define (val x)
   (if (and (is_record x) (== (rid x) "") (== (len x) 3) (!= (kw x) "*")) (get x 2) x))
@@ -470,11 +471,15 @@
       (place spin (rotate_extrude (place to-rev (get a 1)) :angle deg)))))
 
 ;; ---- explicit B-rep (ISO 10303-42 topology) ------------------------------------------------
-; GCAD's graph has no B-rep of its own: back-end B reads the solid from this file itself.
+; GCAD's graph has no B-rep of its own: back-end B reads the file's shapes itself, all of them
+; at once (OpenCASCADE transfers a file's roots, not one solid of it). So an explicit solid
+; inside a procedural history (a hybrid step, Part 55 5.2.2) cannot be read on its own.
 
 (define BREPS ["MANIFOLD_SOLID_BREP" "BREP_WITH_VOIDS" "FACETED_BREP" "SHELL_BASED_SURFACE_MODEL"
                "FACE_BASED_SURFACE_MODEL"])
-(define (brep r) (import_source "step" (parse_number (get (split (rid r) "#") 1))))
+(define (brep r)
+  (fail (where r) ": an explicit solid inside a history cannot be read on its own; "
+        "OpenCASCADE reads a file's shapes all at once"))
 (define (solid/MANIFOLD_SOLID_BREP r ctx) (brep r))
 (define (solid/BREP_WITH_VOIDS r ctx) (brep r))
 (define (solid/FACETED_BREP r ctx) (brep r))
@@ -750,8 +755,14 @@
         (concat [x] (unique-items xs (concat seen [(rid x)]) (+ i 1)))))))
 (define (units-of rep) (context-units (attr (first (filter (partials rep) (fn (p) (> (len p) 3)))) 2)))
 
-(define (step-model header records)
-  (let ((ov (overrides records))
+; The kinds of record the model is built from; one pass picks them out of the whole file.
+(define RELEVANT (concat REPRESENTATIONS ["FREE_FORM_ASSIGNMENT" "EQUAL_PARAMETER_CONSTRAINT"
+                  "BOUND_PARAMETER_ENVIRONMENT" "STYLED_ITEM" "MAPPED_ITEM"
+                  "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION" "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION"]))
+(define (step-model header all)
+  (let ((records (filter all (fn (r) (if (complex? r) (any (kinds r) (fn (k) (contains RELEVANT k)))
+                                           (contains RELEVANT (kw r))))))
+        (ov (overrides records))
         (st (styles records))
         (reps (shape-reps records))
         (pairs (apply concat (for ((rep reps)) (for ((i (items rep))) [rep i]))))
@@ -771,8 +782,11 @@
         (if (> (len skipped) 0)
           (info "also in the file, not shown: the " (apply str (for ((k skipped)) (str k " ")))
                 "representation; the " chosen " one is shown"))
-        (if (and (== chosen "brep") (assembly? records))
-          (at (first (first tops)) (import_source "step"))
+        (if (== chosen "brep")
+          (at (first (first tops))
+            (info "explicit B-rep: " (len unique) " solid(s), read by OpenCASCADE"
+                  (if (assembly? records) " with the assembly's placements" ""))
+            (import_source "step"))
           (for ((i unique)) (solid i (ctx-for i))))))))
 ; Parts placed in an assembly: OpenCASCADE reads the whole file and composes it.
 (define (assembly? records)

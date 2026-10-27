@@ -82,9 +82,10 @@ class ManifoldModel:
 
 
 class _Realizer:
-    def __init__(self, tolerance: float) -> None:
+    def __init__(self, tolerance: float, blobs: dict[str, bytes] | None = None) -> None:
         self.tolerance = tolerance
         self.origins: dict[int, MeshGroup] = {}
+        self.blobs = blobs or {}
 
     def tag(self, m: mf.Manifold, node: Node, color: RGBA | None) -> mf.Manifold:
         m = m.as_original()
@@ -106,6 +107,8 @@ class _Realizer:
         op = node.op
         if node.dim == 3 and op in ("box", "sphere", "cylinder", "polyhedron"):
             return self.tag(self.primitive3(node), node, color)
+        if op == "import":
+            return self.tag(self.imported(node), node, color)
         if op == "rect":
             return mf.CrossSection.square(node.vec("size"), bool(node.arg("center")))
         if op == "circle":
@@ -154,6 +157,40 @@ class _Realizer:
                 node.num("h"), r1, r2, self.segments(node, max(r1, r2)), bool(node.arg("center"))
             )
         return self.polyhedron(node)
+
+    def imported(self, node: Node) -> mf.Manifold:
+        """Explicit B-rep carried by the source (an `import` node): OpenCASCADE reads and
+        tessellates it, as for any mesh export from back-end B. Without OpenCASCADE (the web
+        studio, Windows on ARM) there is nothing that can read it."""
+        try:
+            from gcad.backends.occt_backend import OcctModel, read_step
+        except ImportError:
+            raise GcadError(
+                "explicit B-rep geometry is read by OpenCASCADE (back-end occt), which is not "
+                "available here; the browser studio shows CSG and procedural models only",
+                node.span,
+            ) from None
+        digest = str(node.arg("data"))
+        if digest not in self.blobs:
+            raise GcadError("the data this import reads is not in the graph", node.span)
+        shape = read_step(self.blobs[digest], int(node.num("entity")), digest, node.span)
+        mesh = OcctModel(shape, 3, self.tolerance, node.id, None, None).mesh()
+        try:
+            m = mf.Manifold(
+                mf.Mesh(
+                    vert_properties=np.asarray(mesh.vertices, dtype=np.float32),
+                    tri_verts=np.asarray(mesh.triangles, dtype=np.uint32),
+                )
+            )
+        except Exception as exc:  # manifold3d raises its own error types
+            raise GcadError(f"the imported B-rep is not a closed solid: {exc}", node.span) from None
+        if m.status() != mf.Error.NoError:
+            raise GcadError(
+                "the imported B-rep is not a closed solid, so the mesh back-end cannot use it in "
+                "booleans; use --backend occt",
+                node.span,
+            )
+        return m
 
     def polyhedron(self, node: Node) -> mf.Manifold:
         points = np.asarray(node.rows("points"), dtype=np.float32)
@@ -205,6 +242,6 @@ class ManifoldBackend:
         tol = tolerance if tolerance is not None else default_tolerance(graph)
         if tol <= 0:
             raise GcadError("tessellation tolerance must be positive")
-        realizer = _Realizer(tol)
+        realizer = _Realizer(tol, graph.blobs)
         shape = realizer.build(graph.root, None)
         return ManifoldModel(shape, graph.root.dim, realizer.origins, graph.root.id)
