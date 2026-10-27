@@ -79,6 +79,11 @@ def test_dxf(source: Path, tmp_path: Path, version: str) -> None:
     else:
         read = [np.array(e.get_points("xy"), dtype=float) for e in entities]
     assert_same_outlines(read, model_contours(source), 1e-6)
+    # Readers such as LibreOffice scale the drawing to the header extents; ezdxf's "unset"
+    # defaults (+-1e20) collapse it to a point there.
+    points = np.vstack(model_contours(source))
+    assert np.allclose(doc.header["$EXTMIN"][:2], points.min(axis=0))
+    assert np.allclose(doc.header["$EXTMAX"][:2], points.max(axis=0))
 
 
 def test_svg(source: Path, tmp_path: Path) -> None:
@@ -226,12 +231,16 @@ def test_cgm_structure_and_coordinates(source: Path, tmp_path: Path) -> None:
     ids = [(c, e) for c, e, _ in elements]
     assert ids[0] == (0, 1) and ids[-1] == (0, 2)  # BEGIN / END METAFILE
     assert (1, 1) in ids and (2, 6) in ids and (0, 4) in ids
+    params = dict(((c, e), p) for c, e, p in elements)
+    # VDC REAL PRECISION IEEE double, inside the METAFILE DEFAULTS REPLACEMENT
+    assert _cgm_elements(params[(1, 12)]) == [(3, 2, struct.pack(">hhh", 0, 12, 52))]
+    assert params[(2, 2)] == struct.pack(">h", 1)  # COLOUR SELECTION MODE direct
+    assert params[(2, 7)] == b"\xff\xff\xff"  # BACKGROUND COLOUR white
+    assert params[(5, 22)] == struct.pack(">h", 0)  # INTERIOR STYLE hollow
+    assert params[(5, 23)] == b"\x00\x00\x00"  # FILL COLOUR black
     polygons = [p for c, e, p in elements if (c, e) == (4, 7)]
-    read = []
-    for params in polygons:
-        values = [whole + frac / 65536 for whole, frac in struct.iter_unpack(">hH", params)]
-        read.append(np.array(values, dtype=float).reshape(-1, 2))
-    assert_same_outlines(read, model_contours(source), 1 / 65536)
+    read = [np.frombuffer(p, dtype=">f8").reshape(-1, 2) for p in polygons]
+    assert_same_outlines(read, model_contours(source), 1e-9)
 
 
 def soffice() -> str | None:
@@ -277,6 +286,8 @@ def test_libreoffice_reads(tmp_path: Path, ext: str) -> None:
     # LTRect and LTLine are LTCurve subclasses: everything painted as a path.
     stroked = [o for o in page if isinstance(o, LTCurve) and o.stroke]
     assert stroked, "LibreOffice drew nothing"
+    for o in stroked:  # dark lines, for the white page (CGM leaves colours to the device)
+        assert np.max(np.atleast_1d(o.stroking_color or 0)) < 0.5, o.stroking_color
     box = np.array([o.bbox for o in stroked], dtype=float)
     width = box[:, 2].max() - box[:, 0].min()
     height = box[:, 3].max() - box[:, 1].min()

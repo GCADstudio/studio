@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 
 import ezdxf
-from ezdxf import units
+from ezdxf import units, zoom
 
 from gcad.diagnostics import GcadError
 from gcad.exporters import ExportJob
@@ -55,8 +55,14 @@ def _build(job: ExportJob, d: Drawing, version: str) -> bytes:
             msp.add_lwpolyline(points, close=True, dxfattribs=attribs)
     extents = [c for contour in d.contours for c in contour]
     xs, ys = [p[0] for p in extents], [p[1] for p in extents]
-    doc.header["$EXTMIN"] = (float(min(xs)), float(min(ys)), 0.0)
-    doc.header["$EXTMAX"] = (float(max(xs)), float(max(ys)), 0.0)
+    lo = (float(min(xs)), float(min(ys)), 0.0)
+    hi = (float(max(xs)), float(max(ys)), 0.0)
+    # Readers such as LibreOffice scale the drawing to $EXTMIN/$EXTMAX. On save ezdxf copies
+    # the modelspace extents into the header, but only when both are non-zero vectors; a
+    # drawing that starts at the origin would keep its "unset" +-1e20 defaults. Set both.
+    msp.dxf.extmin, msp.dxf.extmax = lo, hi
+    doc.header["$EXTMIN"], doc.header["$EXTMAX"] = lo, hi
+    zoom.extents(msp, factor=1.05)  # viewers open on the drawing
 
     stream = io.StringIO()
     doc.write(stream)
