@@ -107,7 +107,10 @@ def add(path: Path) -> list[tuple[str, int, str | None]]:
         shutil.copyfile(path, target)
         nx._AP_DICTS.pop(str(target), None)
         return [(name.upper(), len(data.get("entities", {})), None)]
-    return nx.add_schema(path.read_text(encoding="utf-8", errors="replace"), str(path.name))  # type: ignore[no-any-return]
+    made: list[tuple[str, int, str | None]] = nx.add_schema(
+        path.read_text(encoding="utf-8", errors="replace"), str(path.name)
+    )
+    return made
 
 
 def build(parts: list[str], corrigenda: list[str], exp: list[str]) -> Path:

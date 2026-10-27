@@ -10,9 +10,8 @@ from pathlib import Path
 import pytest
 
 from gcad.iso10303 import schemas
-from gcad.kernels import BUNDLED
+from gcad.kernels import BUNDLED, load_kernel
 from gcad.pipeline import evaluate_source
-from gcad.kernels import load_kernel
 
 ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "docs/design/iso10303-coverage.tsv"
@@ -32,7 +31,7 @@ def rows() -> list[list[str]]:
 def test_every_row_has_a_status_and_a_reason() -> None:
     table = rows()
     assert len(table) > 2400
-    for name, part, in_ap, status, reason in table:
+    for name, _part, in_ap, status, reason in table:
         assert status in STATUSES, name
         assert reason.strip(), name
         assert in_ap in ("yes", "no"), name
@@ -57,7 +56,8 @@ def test_no_ap242_entity_without_a_status() -> None:
 
 @pytest.mark.skipif(
     not schemas.has_resources(),
-    reason="the resource parts are not in the schema cache (gcad iso schema build, from your copies)",
+    reason="the resource parts are not in the schema cache "
+    "(gcad iso schema build, from your copies)",
 )
 def test_no_resource_entity_without_a_status() -> None:
     listed = {r[0] for r in rows()}

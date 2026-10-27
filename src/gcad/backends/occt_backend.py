@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover - OCP 7.x
     from OCP.TopTools import TopTools_ListOfShape
 
 from gcad.core.graph import ATTRIBUTE_OPS, Graph, Node, default_tolerance, node_matrix
-from gcad.diagnostics import GcadError
+from gcad.diagnostics import GcadError, Span
 from gcad.mesh import RGBA, Mesh, MeshGroup
 
 POLYGONAL_FN_MAX = 16  # an explicit $fn up to this makes a polygon, as in OpenSCAD
@@ -231,7 +231,7 @@ class OcctModel:
 _STEP_CACHE: dict[tuple[str, int], TopoDS_Shape] = {}
 
 
-def read_step(data: bytes, entity: int, digest: str, span: object = None) -> TopoDS_Shape:
+def read_step(data: bytes, entity: int, digest: str, span: Span | None = None) -> TopoDS_Shape:
     """The shape a STEP file carries: one entity (#n) of it, or everything (entity 0), as
     OpenCASCADE reads it, in millimetres. Kept per file and entity for the session."""
     import os
@@ -249,15 +249,17 @@ def read_step(data: bytes, entity: int, digest: str, span: object = None) -> Top
             fh.write(data)
         reader = STEPControl_Reader()
         if reader.ReadFile(path) != IFSelect_RetDone:
-            raise GcadError("OpenCASCADE could not read the STEP data", span)  # type: ignore[arg-type]
+            raise GcadError("OpenCASCADE could not read the STEP data", span)
         if entity != 0:
-            raise GcadError("OpenCASCADE reads a STEP file's shapes all at once, not one entity", span)  # type: ignore[arg-type]
+            raise GcadError(
+                "OpenCASCADE reads a STEP file's shapes all at once, not one entity", span
+            )
         reader.TransferRoots()
         shape = reader.OneShape()
     finally:
         os.unlink(path)
     if shape is None or shape.IsNull() or not _shapes(shape, TopAbs_FACE):
-        raise GcadError(f"OpenCASCADE found no faces in #{entity}", span)  # type: ignore[arg-type]
+        raise GcadError(f"OpenCASCADE found no faces in #{entity}", span)
     _STEP_CACHE[key] = shape
     return shape
 

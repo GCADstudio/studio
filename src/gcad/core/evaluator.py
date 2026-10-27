@@ -530,7 +530,7 @@ class Evaluator:
             if isinstance(first, Thunk):
                 where = f" (first on line {first.name.span.line})" if first.name.span else ""
                 raise GcadError(f"'{name}' is defined twice{where}", binding.span)
-            thunk = Thunk(binding.items[0], expr, local)  # type: ignore[union-attr, arg-type]
+            thunk = Thunk(binding.items[0], expr, local)
             local.vars[name] = thunk
             thunks.append(thunk)
         if len(form.items) > 2:

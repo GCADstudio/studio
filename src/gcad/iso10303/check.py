@@ -30,8 +30,15 @@ from gcad.iso10303._nxstyle import iso10303 as nx
 # a CSG_SOLID_2D; so csg_solid_2d WR1 fails for every 2D CSG solid whose root is a boolean. The
 # violation is downgraded only when that is all it is: the root is a BOOLEAN_RESULT_2D and every
 # leaf of its tree is one of the primitives the function accepts.
-_CSG_2D_LEAVES = {"CIRCULAR_AREA", "COMPLEX_AREA", "ELLIPTIC_AREA", "HALF_SPACE_2D", "POLYGONAL_AREA",
-                  "PRIMITIVE_2D_WITH_INNER_BOUNDARY", "RECTANGULAR_AREA"}  # fmt: skip
+_CSG_2D_LEAVES = {
+    "CIRCULAR_AREA",
+    "COMPLEX_AREA",
+    "ELLIPTIC_AREA",
+    "HALF_SPACE_2D",
+    "POLYGONAL_AREA",
+    "PRIMITIVE_2D_WITH_INNER_BOUNDARY",
+    "RECTANGULAR_AREA",
+}
 
 
 def _csg_solid_2d_wr1(ev: object, i: object, expr: str) -> tuple[str, str] | None:
@@ -145,6 +152,18 @@ def report(source: str, file: str, rules: bool | None = None) -> Report:
     if note:
         out.append(diag("info", None, note.replace("python -m nxstyle.iso10303", "gcad iso")))
     out += [diag(i.level, i.id, i.message) for i in express.check(f, d)]
+    if have_ap:  # the file's own long form is complete: an entity it lacks is outside the schema
+        ap = _name(f, have_ap)
+        for inst in f:
+            for name in inst.names:
+                if d.entity_name(name) is None:
+                    out.append(
+                        diag(
+                            "error",
+                            inst.id,
+                            f"{name} is not an entity of {ap}, the schema FILE_SCHEMA names",
+                        )
+                    )
     count = sum(len(s.instances) for s in f.sections)
     if rules is None:
         rules = count <= RULES_LIMIT

@@ -265,7 +265,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = isub.add_parser("schema", help="the EXPRESS schemas files are checked against")
     s.add_argument("action", choices=["list", "fetch", "add", "build"])
     s.add_argument("what", nargs="?", help="fetch: AP242, AP214, AP203 or AP203E2; add: a file")
-    s.add_argument("--part", action="append", help="build: PART=your copy (PDF or text), e.g. 42=p42.pdf")
+    s.add_argument(
+        "--part", action="append", help="build: PART=your copy (PDF or text), e.g. 42=p42.pdf"
+    )
     s.add_argument("--cor", action="append", help="build: PART=a corrigendum, e.g. 108=cor1.pdf")
     s.add_argument("--exp", action="append", help="build: more EXPRESS to add")
     s.set_defaults(func=cmd_iso_schema)

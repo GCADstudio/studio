@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 from gcad import GENERATOR
 from gcad.core.graph import Graph, Node, canonical
@@ -41,16 +42,28 @@ from gcad.diagnostics import GcadError
 from gcad.iso10303._nxstyle import p21
 
 R, E, T = p21.Ref, p21.Enum, p21.Typed
+Ref = Any  # an instance name, p21.Ref (the vendored module is untyped)
 U, D = p21.UNSET, p21.DERIVED
 SCHEMA = "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF"
 BOOLEAN = {"union": "UNION", "difference": "DIFFERENCE", "intersection": "INTERSECTION"}
 TRANSFORMS = ("translate", "rotate", "scale", "mirror", "matrix", "color", "name")
 POLYGONAL_FN_MAX = 16  # back-end B makes a polygon of a cylinder or circle with $fn up to this
 #: ISO 13584-20 entities for the operations a Traced expression may hold
-OPS = {"+": "PLUS_EXPRESSION", "-": "MINUS_EXPRESSION", "*": "MULT_EXPRESSION",
-       "/": "SLASH_EXPRESSION", "pow": "POWER_EXPRESSION"}  # fmt: skip
-FUNCS = {"sqrt": "SQUARE_ROOT_FUNCTION", "abs": "ABS_FUNCTION", "neg": "MINUS_FUNCTION",
-         "exp": "EXP_FUNCTION", "ln": "LOG_FUNCTION", "log": "LOG10_FUNCTION"}  # fmt: skip
+OPS = {
+    "+": "PLUS_EXPRESSION",
+    "-": "MINUS_EXPRESSION",
+    "*": "MULT_EXPRESSION",
+    "/": "SLASH_EXPRESSION",
+    "pow": "POWER_EXPRESSION",
+}
+FUNCS = {
+    "sqrt": "SQUARE_ROOT_FUNCTION",
+    "abs": "ABS_FUNCTION",
+    "neg": "MINUS_FUNCTION",
+    "exp": "EXP_FUNCTION",
+    "ln": "LOG_FUNCTION",
+    "log": "LOG10_FUNCTION",
+}
 
 
 def literal(value: object) -> str:
@@ -63,7 +76,8 @@ def literal(value: object) -> str:
         return format_number(float(value))
     if isinstance(value, str):
         return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return "[" + " ".join(literal(v) for v in value) + "]"  # type: ignore[union-attr]
+    assert isinstance(value, list | tuple)
+    return "[" + " ".join(literal(v) for v in value) + "]"
 
 
 def hint(op: str, args: dict[str, object]) -> str:
@@ -75,14 +89,14 @@ def hint(op: str, args: dict[str, object]) -> str:
 class Placement:
     """The PLANE a profile lies on; profile points are its (u, v) parameters."""
 
-    plane: R
+    plane: Ref
 
 
 @dataclass
 class Binding:
     """An attribute whose value came from parameters: owner, its entity and attribute, value."""
 
-    owner: R
+    owner: Ref
     attribute: str  # SCHEMA.ENTITY.ATTRIBUTE
     value: object  # a Traced number
 
@@ -91,43 +105,52 @@ class Binding:
 class _Writer:
     graph: Graph
     f: p21.File = field(default_factory=p21.File)
-    items: dict[str, R] = field(default_factory=dict)
-    order: list[R] = field(default_factory=list)  # the history, operands before results
+    items: dict[str, Ref] = field(default_factory=dict)
+    order: list[Ref] = field(default_factory=list)  # the history, operands before results
     bindings: list[Binding] = field(default_factory=list)
-    cache: dict[tuple[object, ...], R] = field(default_factory=dict)
+    cache: dict[tuple[object, ...], Ref] = field(default_factory=dict)
 
-    def add(self, name: str, *params: object) -> R:
-        ref: R = self.f.add(name, *params)
+    def add(self, name: str, *params: object) -> Ref:
+        ref: Ref = self.f.add(name, *params)
         return ref
 
-    def cx(self, *records: tuple[str, list[object]]) -> R:
-        ref: R = self.f.add_complex(records)
+    def cx(self, *records: tuple[str, list[object]]) -> Ref:
+        ref: Ref = self.f.add_complex(records)
         return ref
 
     # -- geometry ------------------------------------------------------------------------
 
-    def point(self, p: list[float] | tuple[float, ...]) -> R:
+    def point(self, p: list[float] | tuple[float, ...]) -> Ref:
         key = ("pt", *(float(c) for c in p))
         if key not in self.cache:
             self.cache[key] = self.add("CARTESIAN_POINT", "", [float(c) for c in p])
         return self.cache[key]
 
-    def direction(self, d: list[float] | tuple[float, ...]) -> R:
+    def direction(self, d: list[float] | tuple[float, ...]) -> Ref:
         key = ("dir", *(float(c) for c in d))
         if key not in self.cache:
             self.cache[key] = self.add("DIRECTION", "", [float(c) for c in d])
         return self.cache[key]
 
-    def a2p3(self, origin: list[float], axis: list[float] = (0, 0, 1), x: list[float] = (1, 0, 0)) -> R:  # type: ignore[assignment]
-        return self.add("AXIS2_PLACEMENT_3D", "", self.point(origin), self.direction(axis), self.direction(x))
+    def a2p3(
+        self,
+        origin: list[float],
+        axis: tuple[float, ...] | list[float] = (0.0, 0.0, 1.0),
+        x: tuple[float, ...] | list[float] = (1.0, 0.0, 0.0),
+    ) -> Ref:
+        return self.add(
+            "AXIS2_PLACEMENT_3D", "", self.point(origin), self.direction(axis), self.direction(x)
+        )
 
-    def a1p(self, origin: list[float], axis: list[float] = (0, 0, 1)) -> R:  # type: ignore[assignment]
+    def a1p(
+        self, origin: list[float], axis: tuple[float, ...] | list[float] = (0.0, 0.0, 1.0)
+    ) -> Ref:
         return self.add("AXIS1_PLACEMENT", "", self.point(origin), self.direction(axis))
 
-    def a2p2(self, origin: list[float]) -> R:
+    def a2p2(self, origin: list[float]) -> Ref:
         return self.add("AXIS2_PLACEMENT_2D", "", self.point(origin), self.direction([1.0, 0.0]))
 
-    def bind(self, owner: R, attribute: str, value: object) -> object:
+    def bind(self, owner: Ref, attribute: str, value: object) -> object:
         if getattr(value, "expr", None) is not None:
             self.bindings.append(Binding(owner, attribute, value))
         return float(value)  # type: ignore[arg-type]
@@ -137,7 +160,7 @@ class _Writer:
     def refuse(self, node: Node, why: str) -> GcadError:
         return GcadError(f"parametric STEP: {node.op} {why}", node.span)
 
-    def item(self, node: Node) -> R:
+    def item(self, node: Node) -> Ref:
         """The item a 3D node becomes; written once per distinct node."""
         if node.id in self.items:
             return self.items[node.id]
@@ -146,25 +169,30 @@ class _Writer:
         self.order.append(ref)
         return ref
 
-    def _item(self, node: Node) -> R:
+    def _item(self, node: Node, at: list[float] | None = None) -> Ref:
+        """at: a translation folded into the primitive's own placement (see foldable)."""
         op, name = node.op, hint(node.op, {k: canonical(v) for k, v in node.args})
         if node.dim == 2:
             return self.area(node)
+        if op == "translate" and self.foldable(node):
+            return self._item(node.children[0], node.vec("v"))
         if op == "box":
             size = node.vec("size")
-            origin = [-s / 2 for s in size] if node.arg("center") else [0.0, 0.0, 0.0]
+            origin = [-s / 2 for s in size] if node.arg("center") else list(at or [0.0, 0.0, 0.0])
             place = self.a2p3(origin)
             ref = R(self.f.next_id())  # the BLOCK, written next; bindings point at it
-            x, y, z = (self.bind(ref, f"GEOMETRIC_MODEL_SCHEMA.BLOCK.{a}", v) for a, v in
-                       zip("XYZ", (dict(node.args)["size"]), strict=True))  # fmt: skip
+            x, y, z = (
+                self.bind(ref, f"GEOMETRIC_MODEL_SCHEMA.BLOCK.{a}", v)
+                for a, v in zip("XYZ", node.arg("size"), strict=True)  # type: ignore[arg-type]
+            )
             return self.add("BLOCK", name, place, x, y, z)
         if op == "sphere":
-            centre = self.point([0.0, 0.0, 0.0])
+            centre = self.point(list(at or [0.0, 0.0, 0.0]))
             ref = R(self.f.next_id())
             rad = self.bind(ref, "GEOMETRIC_MODEL_SCHEMA.SPHERE.RADIUS", dict(node.args)["r"])
             return self.add("SPHERE", name, rad, centre)
         if op == "cylinder":
-            return self.cylinder(node, name)
+            return self.cylinder(node, name, at)
         if op in BOOLEAN:
             return self.boolean(node)
         if op in TRANSFORMS:
@@ -179,18 +207,40 @@ class _Writer:
             raise self.refuse(node, "is explicit B-rep read from a file; export B-rep STEP for it")
         raise self.refuse(node, "has no ISO 10303-42 CSG form")
 
-    def cylinder(self, node: Node, name: str) -> R:
+    @staticmethod
+    def foldable(node: Node) -> bool:
+        """A translation of one uncentred box, sphere or cylinder goes into the primitive's own
+        placement, as other CAD systems write them, rather than into a SOLID_REPLICA: the
+        location is then the translation exactly, so the reader recovers the same node."""
+        if len(node.children) != 1:
+            return False
+        child = node.children[0]
+        if child.op == "sphere" or (child.op == "box" and not child.arg("center")):
+            return True
+        return (
+            child.op == "cylinder"
+            and not child.arg("center")
+            and child.num("r1") == child.num("r2")
+        )
+
+    def cylinder(self, node: Node, name: str, at: list[float] | None = None) -> Ref:
         fn = node.num("fn", 0.0)
         if 3 <= fn <= POLYGONAL_FN_MAX:
-            raise self.refuse(node, f"with $fn = {fn:g} is a prism in GCAD; it has no CSG primitive")
+            raise self.refuse(
+                node, f"with $fn = {fn:g} is a prism in GCAD; it has no CSG primitive"
+            )
         args = dict(node.args)
         h, r1, r2 = node.num("h"), node.num("r1"), node.num("r2")
         z0 = -h / 2 if node.arg("center") else 0.0
         if r1 == r2:
-            place = self.a1p([0.0, 0.0, z0])
+            place = self.a1p(list(at) if at else [0.0, 0.0, z0])
             ref = R(self.f.next_id())
-            height = self.bind(ref, "GEOMETRIC_MODEL_SCHEMA.RIGHT_CIRCULAR_CYLINDER.HEIGHT", args["h"])
-            rad = self.bind(ref, "GEOMETRIC_MODEL_SCHEMA.RIGHT_CIRCULAR_CYLINDER.RADIUS", args["r1"])
+            height = self.bind(
+                ref, "GEOMETRIC_MODEL_SCHEMA.RIGHT_CIRCULAR_CYLINDER.HEIGHT", args["h"]
+            )
+            rad = self.bind(
+                ref, "GEOMETRIC_MODEL_SCHEMA.RIGHT_CIRCULAR_CYLINDER.RADIUS", args["r1"]
+            )
             return self.add("RIGHT_CIRCULAR_CYLINDER", name, place, height, rad)
         # Part 42 6.4.15: the location is the centre of the smaller face, the axis points away
         # from the base, and semi_angle is the half-angle; the base lies height below.
@@ -201,13 +251,14 @@ class _Writer:
             place, top = self.a1p([0.0, 0.0, z0], [0.0, 0.0, -1.0]), r1
         return self.add("RIGHT_CIRCULAR_CONE", name, place, h, top, semi)
 
-    def operand(self, node: Node) -> R:
+    def operand(self, node: Node) -> Ref:
         return self.item(node)
 
-    def solid_model(self, node: Node) -> R:
+    def solid_model(self, node: Node) -> Ref:
         """SOLID_REPLICA's parent must be a solid_model: wrap a primitive or a boolean result."""
         ref = self.item(node)
-        if node.op in ("box", "sphere", "cylinder", *BOOLEAN) or node.dim == 2:
+        primitive = node.op in ("box", "sphere", "cylinder", *BOOLEAN) or node.dim == 2
+        if primitive or (node.op == "translate" and self.foldable(node)):
             key = ("csg", node.id)
             if key not in self.cache:
                 self.cache[key] = self.add("CSG_SOLID", "", ref)
@@ -215,23 +266,25 @@ class _Writer:
             return self.cache[key]
         return ref
 
-    def boolean(self, node: Node) -> R:
+    def boolean(self, node: Node) -> Ref:
         return self.chain(list(node.children), node.op, node.op, node.dim)
 
-    def chain(self, kids: list[Node], op: str, tag: str, dim: int) -> R:
+    def chain(self, kids: list[Node], op: str, tag: str, dim: int) -> Ref:
         """An n-ary boolean as binary ones chained to the left; the outermost says how many.
         tag "children" marks the shapes of a transform that applies to several of them."""
         entity = "BOOLEAN_RESULT_2D" if dim == 2 else "BOOLEAN_RESULT"
         acc = self.operand(kids[0])
         for i, child in enumerate(kids[1:], start=2):
             n = len(kids) if i == len(kids) else 0
-            acc_ref = self.add(entity, hint(tag, {"n": n}), E(BOOLEAN[op]), acc, self.operand(child))
+            acc_ref = self.add(
+                entity, hint(tag, {"n": n}), E(BOOLEAN[op]), acc, self.operand(child)
+            )
             if i < len(kids):
                 self.order.append(acc_ref)
             acc = acc_ref
         return acc
 
-    def replica(self, node: Node, name: str) -> R:
+    def replica(self, node: Node, name: str) -> Ref:
         m = self.matrix(node)
         if node.dim == 2:
             raise self.refuse(node, "of a 2D boolean has no ISO 10303-42 form; move its primitives")
@@ -249,10 +302,16 @@ class _Writer:
                 self.order.append(self.cache[key])
             parent = self.cache[key]
         op = self.add(
-            "CARTESIAN_TRANSFORMATION_OPERATOR_3D", name, name, U,
-            self.direction(units[0]), self.direction(units[1]),
-            self.point([m[0][3], m[1][3], m[2][3]]), scale, self.direction(units[2]),
-        )  # fmt: skip
+            "CARTESIAN_TRANSFORMATION_OPERATOR_3D",
+            name,
+            name,
+            U,
+            self.direction(units[0]),
+            self.direction(units[1]),
+            self.point([m[0][3], m[1][3], m[2][3]]),
+            scale,
+            self.direction(units[2]),
+        )
         return self.add("SOLID_REPLICA", "", parent, op)
 
     def matrix(self, node: Node) -> list[list[float]]:
@@ -266,14 +325,20 @@ class _Writer:
         assert m is not None
         a = m[:3, :3]
         s = float(abs(a[:, 0] @ a[:, 0])) ** 0.5
-        if s == 0 or float(abs((a.T @ a) - s * s * __import__("numpy").eye(3)).max()) > 1e-9 * s * s:
-            raise self.refuse(node, "is not a rotation, reflection or uniform scale (non-uniform "
-                                    "scaling and shear have no ISO 10303-42 form)")  # fmt: skip
+        if (
+            s == 0
+            or float(abs((a.T @ a) - s * s * __import__("numpy").eye(3)).max()) > 1e-9 * s * s
+        ):
+            raise self.refuse(
+                node,
+                "is not a rotation, reflection or uniform scale (non-uniform "
+                "scaling and shear have no ISO 10303-42 form)",
+            )
         return [[float(x) for x in row] for row in m]
 
     # -- 2D: areas, profiles ------------------------------------------------------------
 
-    def area(self, node: Node, offset: tuple[float, float] = (0.0, 0.0)) -> R:
+    def area(self, node: Node, offset: tuple[float, float] = (0.0, 0.0)) -> Ref:
         """A 2D node as Part 42 2D CSG: primitive_2d areas and boolean results."""
         if node.id in self.items and offset == (0.0, 0.0):
             return self.items[node.id]
@@ -285,15 +350,23 @@ class _Writer:
             self.round_enough(node)
             centre = self.point2(offset)
             ref = R(self.f.next_id())
-            rad = self.bind(ref, "GEOMETRIC_MODEL_SCHEMA.CIRCULAR_AREA.RADIUS", dict(node.args)["r"])
+            rad = self.bind(
+                ref, "GEOMETRIC_MODEL_SCHEMA.CIRCULAR_AREA.RADIUS", dict(node.args)["r"]
+            )
             return self.add("CIRCULAR_AREA", name, centre, rad)
         if op == "rect":
             size = node.vec("size")
-            o = [offset[0] - size[0] / 2, offset[1] - size[1] / 2] if node.arg("center") else list(offset)
+            o = (
+                [offset[0] - size[0] / 2, offset[1] - size[1] / 2]
+                if node.arg("center")
+                else list(offset)
+            )
             return self.add("RECTANGULAR_AREA", name, self.a2p2(o), size[0], size[1])
         if op == "polygon":
             if node.arg("paths") is not None:
-                raise self.refuse(node, "with paths (holes) has no POLYGONAL_AREA form; use difference")
+                raise self.refuse(
+                    node, "with paths (holes) has no POLYGONAL_AREA form; use difference"
+                )
             pts = [[p[0] + offset[0], p[1] + offset[1]] for p in node.rows("points")]
             if offset != (0.0, 0.0):
                 name = ""
@@ -305,9 +378,11 @@ class _Writer:
     def round_enough(self, node: Node) -> None:
         fn = node.num("fn", 0.0)
         if 3 <= fn <= POLYGONAL_FN_MAX:
-            raise self.refuse(node, f"with $fn = {fn:g} is a polygon in GCAD; write it as polygon()")
+            raise self.refuse(
+                node, f"with $fn = {fn:g} is a polygon in GCAD; write it as polygon()"
+            )
 
-    def profile(self, node: Node, to3d: Placement) -> list[R]:
+    def profile(self, node: Node, to3d: Placement) -> list[Ref]:
         """A 2D node as the boundaries of a CURVE_BOUNDED_SURFACE: one primitive, or a difference
         of a primitive and primitives inside it. to3d places a profile point on the plane."""
         if node.op == "difference":
@@ -315,23 +390,45 @@ class _Writer:
             return [outer, *(self.boundary(c, False, to3d) for c in node.children[1:])]
         return [self.boundary(node, True, to3d)]
 
-    def boundary(self, node: Node, outer: bool, to3d: Placement, offset: tuple[float, float] = (0.0, 0.0)) -> R:
+    def boundary(
+        self, node: Node, outer: bool, to3d: Placement, offset: tuple[float, float] = (0.0, 0.0)
+    ) -> Ref:
         """A closed loop on the profile's plane: BOUNDED_PCURVEs on the plane whose 2D curves are
         trimmed lines or two half circles, in the plane's (u, v), which are the profile's own
         (x, y) (Part 42 4.4.41 to 4.4.47; freecad-nxstyle's layout)."""
         kind = "OUTER_BOUNDARY_CURVE" if outer else "BOUNDARY_CURVE"
         if node.op == "translate" and node.children:
             v = node.vec("v")
-            return self.boundary(node.children[0], outer, to3d, (offset[0] + v[0], offset[1] + v[1]))
+            return self.boundary(
+                node.children[0], outer, to3d, (offset[0] + v[0], offset[1] + v[1])
+            )
         name = hint(node.op, {k: canonical(v) for k, v in node.args})
         plane = to3d.plane
         if node.op == "circle":
             self.round_enough(node)
             c, r = offset, node.num("r")
             east, west = (c[0] + r, c[1]), (c[0] - r, c[1])
-            curve = self.add("CIRCLE", "", self.add("AXIS2_PLACEMENT_2D", "", self.point2(c), self.direction([1.0, 0.0])), r)
-            segs = [self.pcurve(plane, self.add("TRIMMED_CURVE", "", curve, [self.point2(a)], [self.point2(b)], True,
-                                                E("CARTESIAN"))) for a, b in ((east, west), (west, east))]  # fmt: skip
+            curve = self.add(
+                "CIRCLE",
+                "",
+                self.add("AXIS2_PLACEMENT_2D", "", self.point2(c), self.direction([1.0, 0.0])),
+                r,
+            )
+            segs = [
+                self.pcurve(
+                    plane,
+                    self.add(
+                        "TRIMMED_CURVE",
+                        "",
+                        curve,
+                        [self.point2(a)],
+                        [self.point2(b)],
+                        True,
+                        E("CARTESIAN"),
+                    ),
+                )
+                for a, b in ((east, west), (west, east))
+            ]
             return self.add(kind, name, segs, E("F"))
         if node.op == "rect":
             sx, sy = node.vec("size")
@@ -340,24 +437,32 @@ class _Writer:
         elif node.op == "polygon" and node.arg("paths") is None:
             pts = node.rows("points")
         else:
-            raise self.refuse(node, "cannot be a profile boundary (use circle, square or a polygon without paths)")
+            raise self.refuse(
+                node, "cannot be a profile boundary (use circle, square or a polygon without paths)"
+            )
         if offset != (0.0, 0.0):
             name = ""
-        pts = [(p[0] + offset[0], p[1] + offset[1]) for p in pts]
+        corners = [(p[0] + offset[0], p[1] + offset[1]) for p in pts]
         segs = []
-        for a, b in zip(pts, [*pts[1:], pts[0]], strict=True):
+        for a, b in zip(corners, [*corners[1:], corners[0]], strict=True):
             d = (b[0] - a[0], b[1] - a[1])
             length = math.hypot(*d)
-            line = self.add("LINE", "", self.point2(a),
-                            self.add("VECTOR", "", self.direction([d[0] / length, d[1] / length]), length))  # fmt: skip
-            trimmed = self.add("TRIMMED_CURVE", "", line, [self.point2(a)], [self.point2(b)], True, E("CARTESIAN"))
+            line = self.add(
+                "LINE",
+                "",
+                self.point2(a),
+                self.add("VECTOR", "", self.direction([d[0] / length, d[1] / length]), length),
+            )
+            trimmed = self.add(
+                "TRIMMED_CURVE", "", line, [self.point2(a)], [self.point2(b)], True, E("CARTESIAN")
+            )
             segs.append(self.pcurve(plane, trimmed))
         return self.add(kind, name, segs, E("F"))
 
-    def point2(self, p: tuple[float, float] | list[float]) -> R:
+    def point2(self, p: tuple[float, float] | list[float]) -> Ref:
         return self.point([float(p[0]), float(p[1])])
 
-    def pcurve(self, plane: R, curve2d: R) -> R:
+    def pcurve(self, plane: Ref, curve2d: Ref) -> Ref:
         if "pctx" not in self.__dict__:
             self.__dict__["pctx"] = self.cx(
                 ("GEOMETRIC_REPRESENTATION_CONTEXT", [2]),
@@ -368,7 +473,7 @@ class _Writer:
         pc = self.add("BOUNDED_PCURVE", "", plane, rep)
         return self.add("COMPOSITE_CURVE_SEGMENT", E("CONTINUOUS"), True, pc)
 
-    def extrusion(self, node: Node, name: str) -> R:
+    def extrusion(self, node: Node, name: str) -> Ref:
         if node.num("twist") != 0 or node.vec("scale") != [1.0, 1.0]:
             raise self.refuse(node, "with twist or scale has no ISO 10303-42 form")
         child = self.single(node)
@@ -378,10 +483,12 @@ class _Writer:
         surface = self.add("CURVE_BOUNDED_SURFACE", "", plane, self.profile(child, to3d), False)
         direction = self.direction([0.0, 0.0, 1.0])
         ref = R(self.f.next_id())
-        depth = self.bind(ref, "GEOMETRIC_MODEL_SCHEMA.EXTRUDED_AREA_SOLID.DEPTH", dict(node.args)["height"])
+        depth = self.bind(
+            ref, "GEOMETRIC_MODEL_SCHEMA.EXTRUDED_AREA_SOLID.DEPTH", dict(node.args)["height"]
+        )
         return self.add("EXTRUDED_AREA_SOLID", name, surface, direction, depth)
 
-    def revolution(self, node: Node, name: str) -> R:
+    def revolution(self, node: Node, name: str) -> Ref:
         child = self.single(node)
         # GCAD's profile is (radius, height) in its xy; in 3D it lies in the xz plane, which
         # rotate_extrude spins about z (OpenSCAD's convention). The plane's normal is -y, so its
@@ -399,12 +506,21 @@ class _Writer:
 
     # -- the file ------------------------------------------------------------------------
 
-    def contexts(self) -> R:
-        mm = self.cx(("LENGTH_UNIT", []), ("NAMED_UNIT", [D]), ("SI_UNIT", [E("MILLI"), E("METRE")]))
+    def contexts(self) -> Ref:
+        mm = self.cx(
+            ("LENGTH_UNIT", []), ("NAMED_UNIT", [D]), ("SI_UNIT", [E("MILLI"), E("METRE")])
+        )
         rad = self.cx(("NAMED_UNIT", [D]), ("PLANE_ANGLE_UNIT", []), ("SI_UNIT", [U, E("RADIAN")]))
-        sr = self.cx(("NAMED_UNIT", [D]), ("SI_UNIT", [U, E("STERADIAN")]), ("SOLID_ANGLE_UNIT", []))
-        unc = self.add("UNCERTAINTY_MEASURE_WITH_UNIT", T("LENGTH_MEASURE", 1e-7), mm,
-                       "distance_accuracy_value", "confusion accuracy")  # fmt: skip
+        sr = self.cx(
+            ("NAMED_UNIT", [D]), ("SI_UNIT", [U, E("STERADIAN")]), ("SOLID_ANGLE_UNIT", [])
+        )
+        unc = self.add(
+            "UNCERTAINTY_MEASURE_WITH_UNIT",
+            T("LENGTH_MEASURE", 1e-7),
+            mm,
+            "distance_accuracy_value",
+            "confusion accuracy",
+        )
         dim = 2 if self.graph.root.dim == 2 else 3
         ctx = self.cx(
             ("GEOMETRIC_REPRESENTATION_CONTEXT", [dim]),
@@ -413,8 +529,9 @@ class _Writer:
             ("REPRESENTATION_CONTEXT", [f"{dim}D", "GCAD Studio"]),
         )
         app = self.add("APPLICATION_CONTEXT", "managed model based 3d engineering")
-        self.add("APPLICATION_PROTOCOL_DEFINITION", "international standard",
-                 SCHEMA.lower(), 2020, app)  # fmt: skip
+        self.add(
+            "APPLICATION_PROTOCOL_DEFINITION", "international standard", SCHEMA.lower(), 2020, app
+        )
         self.add("PRODUCT_CONTEXT", "", app, "mechanical")
         return ctx
 
@@ -444,24 +561,32 @@ class _Writer:
 
     # -- ISO 10303-108 parameters --------------------------------------------------------
 
-    def parameters(self, title: str, owners: list[R], ctx: R, history: R | None) -> None:
+    def parameters(self, title: str, owners: list[Ref], ctx: Ref, history: Ref | None) -> None:
         generics = self.add("ELEMENTARY_SPACE", E("ES_GENERICS"))
-        reals: list[R] = []
-        unbound: dict[str, R] = {}
+        reals: list[Ref] = []
+        unbound: dict[str, Ref] = {}
 
-        def variable(name: str, value: float) -> R:
+        def variable(name: str, value: float) -> Ref:
             if name not in unbound:
                 if not reals:
                     reals.append(self.add("ELEMENTARY_SPACE", E("ES_REALS")))
                 ref = self.cx(
-                    ("EXPRESSION", []), ("GENERIC_EXPRESSION", []), ("GENERIC_VARIABLE", []),
-                    ("MATHS_REAL_VARIABLE", []), ("MATHS_VARIABLE", [reals[0], name]),
-                    ("NUMERIC_EXPRESSION", []), ("NUMERIC_VARIABLE", []), ("REAL_NUMERIC_VARIABLE", []),
-                    ("REPRESENTATION_ITEM", [name]), ("SIMPLE_GENERIC_EXPRESSION", []),
-                    ("SIMPLE_NUMERIC_EXPRESSION", []), ("UNBOUND_VARIATIONAL_PARAMETER", []), ("VARIABLE", []),
+                    ("EXPRESSION", []),
+                    ("GENERIC_EXPRESSION", []),
+                    ("GENERIC_VARIABLE", []),
+                    ("MATHS_REAL_VARIABLE", []),
+                    ("MATHS_VARIABLE", [reals[0], name]),
+                    ("NUMERIC_EXPRESSION", []),
+                    ("NUMERIC_VARIABLE", []),
+                    ("REAL_NUMERIC_VARIABLE", []),
+                    ("REPRESENTATION_ITEM", [name]),
+                    ("SIMPLE_GENERIC_EXPRESSION", []),
+                    ("SIMPLE_NUMERIC_EXPRESSION", []),
+                    ("UNBOUND_VARIATIONAL_PARAMETER", []),
+                    ("VARIABLE", []),
                     ("VARIATIONAL_PARAMETER", ["[mm] ", T("MATHS_REAL", float(value))]),
                     ("VARIATIONAL_REPRESENTATION_ITEM", []),
-                )  # fmt: skip
+                )
                 sem = self.add("UNBOUND_VARIATIONAL_PARAMETER_SEMANTICS")
                 self.add("UNBOUND_PARAMETER_ENVIRONMENT", ref, sem)
                 unbound[name] = ref
@@ -469,7 +594,7 @@ class _Writer:
 
         used: set[int] = set()
 
-        def expression(e: tuple[object, ...]) -> R:
+        def expression(e: tuple[object, ...]) -> Ref:
             kind = e[0]
             if kind == "param":
                 ref = variable(str(e[1]), float(e[2]))  # type: ignore[arg-type]
@@ -483,9 +608,11 @@ class _Writer:
                 return self.add(FUNCS[kind], expression(e[1]))  # type: ignore[arg-type]
             raise GcadError(f"parametric STEP: the operation {kind!r} has no ISO 13584-20 form")
 
-        items: list[R] = list(owners)
+        items: list[Ref] = list(owners)
         for b in self.bindings:
-            label = b.attribute.rsplit(".", 2)[1].lower() + "." + b.attribute.rsplit(".", 1)[1].lower()
+            label = (
+                b.attribute.rsplit(".", 2)[1].lower() + "." + b.attribute.rsplit(".", 1)[1].lower()
+            )
             label = f"#{int(b.owner)} {label}"
             bound = self.add("BOUND_VARIATIONAL_PARAMETER", label, generics, label, U, D)
             ref = self.add("INSTANCE_ATTRIBUTE_REFERENCE", b.attribute, b.owner)
@@ -502,7 +629,14 @@ class _Writer:
             ("VARIATIONAL_REPRESENTATION", []),
         )
         if history is not None:
-            self.add("VARIATIONAL_CURRENT_REPRESENTATION_RELATIONSHIP", title, U, wrapper, history, history)
+            self.add(
+                "VARIATIONAL_CURRENT_REPRESENTATION_RELATIONSHIP",
+                title,
+                U,
+                wrapper,
+                history,
+                history,
+            )
 
 
 def to_step(graph: Graph, title: str, time_stamp: str, source: str = "") -> str:

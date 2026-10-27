@@ -128,7 +128,7 @@ class GraphOnly:
     def _none(self) -> object:
         raise GcadError("this format is written from the graph; nothing was realized")
 
-    mesh = contours = volume = area = bounds = _none  # type: ignore[assignment]
+    mesh = contours = volume = area = bounds = _none
 
     def is_valid(self) -> bool:
         return True
