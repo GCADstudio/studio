@@ -456,12 +456,17 @@
             (if (and (is_list h) (near rad (harg h "r")))
               (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
               (circle rad)))))
-      (let ((pts (for ((i (range 0 (- (len curves) 1))))
-                   (let ((c (get curves i)) (s (get segs i)))
-                     (if (and (is c "TRIMMED_CURVE") (is (attr c 1) "LINE"))
-                       (trim-point (if (== (attr s 1) (attr c 4)) (attr c 2) (attr c 3)) ctx)
-                       (fail (where c) ": a profile may hold lines and whole circles; "
-                             "GCAD's 2D shapes have no arcs or splines (FR-B4)"))))))
+      (let ((pts (apply concat
+                   (for ((i (range 0 (- (len curves) 1))))
+                     (let ((c (get curves i)) (s (get segs i)))
+                       (if (and (is c "TRIMMED_CURVE") (is (attr c 1) "LINE"))
+                         [(trim-point (if (== (attr s 1) (attr c 4)) (attr c 2) (attr c 3)) ctx)]
+                         (if (is c "POLYLINE")
+                           (let ((q (for ((x (attr c 1))) (p2 x ctx)))
+                                 (o (if (attr s 1) q (for ((k (range (- (len q) 1) 0 -1))) (get q k)))))
+                             (for ((k (range 0 (- (len o) 2)))) (get o k)))
+                           (fail (where c) ": a profile may hold lines and whole circles; "
+                                 "GCAD's 2D shapes have no arcs or splines (FR-B4)"))))))))
         (polyline-2d b pts)))))
 (define (circle-2d c m ctx)
   (let ((h (hint-of c "circle"))
@@ -624,7 +629,13 @@
                            (let ((s (solid e ctx)))
                              (if (is_undef s) (at e (info (kw e) ": an open polyline is not shown")) s))))
                        (fn (s) (not (is_undef s))))))
-    (if (== (len areas) 0) (fail "the sketch has no closed region to show") (union areas))))
+    (if (== (len areas) 0) (fail "the sketch has no closed region to show") (even-odd areas))))
+; Loops inside loops are holes, as in a face: the regions combined even-odd.
+(define (even-odd shapes (i 1) (acc undef))
+  (let ((a (if (is_undef acc) (first shapes) acc)))
+    (if (>= i (len shapes)) a
+      (let ((b (get shapes i)))
+        (even-odd shapes (+ i 1) (union (difference a b) (difference b a)))))))
 
 ;; ---- ISO 10303-111: features on a solid ----------------------------------------------------
 ; Round holes are a solid less cylinders (and a cone for a conical bottom), all exact; a hole
@@ -774,8 +785,8 @@
       (if (is_undef (harg h "paths")) (polygon (harg h "points")) (polygon (harg h "points") (harg h "paths")))
       (polygon pts))))
 (define (solid/ELLIPTIC_AREA r ctx)
-  (place (placement (attr r 1) ctx)
-    (scale [(length r 2 "semi_axis_1" ctx) (length r 3 "semi_axis_2" ctx)] (circle 1))))
+  (let ((a (length r 2 "semi_axis_1" ctx)) (b (length r 3 "semi_axis_2" ctx)))
+    (place (placement (attr r 1) ctx) (scale [1 (/ b a)] (circle a)))))
 
 ;; ---- ISO 10303-108 parameters, ISO 10303-50 and ISO 13584-20 expressions -------------------
 ; A free-form assignment or an equal-parameter constraint gives a bound parameter a value; the

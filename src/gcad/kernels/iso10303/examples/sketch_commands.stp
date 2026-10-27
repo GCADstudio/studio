@@ -1,0 +1,42 @@
+ISO-10303-21;
+HEADER;
+/* An ISO 10303-112 sketch, written by hand: a sequence of modelling commands. The closed
+   regions (a rectangle, a circle, a hexagon, a closed polyline) are the 2D model; the open
+   line is a curve with no area, which the studio reports and does not show. No AP242 edition
+   carries Part 112, so the file names the Part 112 schema itself. */
+FILE_DESCRIPTION(('ISO 10303-112 sketch commands'),'2;1');
+FILE_NAME('sketch_commands.stp','2026-10-27T00:00:00',(''),(''),'','','');
+FILE_SCHEMA(('PROCEDURAL_SKETCH_SCHEMA'));
+ENDSEC;
+DATA;
+#1=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));
+#2=(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.));
+#3=(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT());
+#4=(GEOMETRIC_REPRESENTATION_CONTEXT(2)GLOBAL_UNIT_ASSIGNED_CONTEXT((#1,#2,#3))REPRESENTATION_CONTEXT('2D','sketch'));
+#10=CARTESIAN_POINT('',(0.,0.));
+#11=CARTESIAN_POINT('',(40.,0.));
+#12=CARTESIAN_POINT('',(20.,25.));
+#13=CREATE_RECTANGLE('outline',#10,#11,#12);
+#14=CARTESIAN_POINT('',(10.,12.5));
+#15=CREATE_CIRCLE_CENTRE_POINT('hole',#14,4.);
+#16=CARTESIAN_POINT('',(60.,12.));
+#17=CARTESIAN_POINT('',(68.,12.));
+#18=CREATE_POLYGON('hexagon',6.,#16,#17,.INSCRIBED.,8.);
+#19=CARTESIAN_POINT('',(80.,0.));
+#20=CARTESIAN_POINT('',(95.,0.));
+#21=CARTESIAN_POINT('',(80.,15.));
+#22=CREATE_POLYLINE('triangle',(#19,#20,#21,#19));
+#23=CARTESIAN_POINT('',(0.,-10.));
+#24=CARTESIAN_POINT('',(95.,-10.));
+#25=CREATE_LINE_SEGMENT_2_POINTS('base line',#23,#24);
+#26=CARTESIAN_POINT('',(30.,40.));
+#27=CARTESIAN_POINT('',(36.,40.));
+#28=CREATE_CIRCLE_2_POINTS('2-point circle',#26,#27);
+#29=CARTESIAN_POINT('',(50.,40.));
+#30=CARTESIAN_POINT('',(56.,40.));
+#31=CARTESIAN_POINT('',(53.,43.));
+#32=CREATE_CIRCLE_3_POINTS('3-point circle',#29,#30,#31);
+#40=(GEOMETRIC_REPRESENTATION_ITEM()PROCEDURAL_REPRESENTATION_SEQUENCE((#13,#15,#18,#22,#25,#28,#32),(),'sketch')PROCEDURAL_SHAPE_REPRESENTATION_SEQUENCE()REPRESENTATION_ITEM('sketch'));
+#41=PROCEDURAL_SHAPE_REPRESENTATION('sketch',(#40),#4);
+ENDSEC;
+END-ISO-10303-21;
