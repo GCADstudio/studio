@@ -84,6 +84,113 @@ A file opened in the studio is checked against a grammar. If that grammar's rela
 
 ### 1.6 Errors found in the notation
 
-Checked against the 14 errors in the standards already recorded with freecad-nxstyle (parametric-step page, "Errors in the standards themselves"); this one is new:
+Checked against the 14 errors in the standards already recorded with freecad-nxstyle (parametric-step page, "Errors in the standards themselves"); these two are new:
 
 15. **10303-21:2002 Table 3, `DATA_SECTION`.** The production ends without the full stop that WSN requires after every production (annex B). A mechanical WSN reader must special-case it; read literally, `DATA_SECTION` and `ENTITY_INSTANCE_LIST` run together into one malformed production.
+16. **10303-21:2002 Table 1, `CHARACTER`.** The same: no closing full stop. The WSN reader of §1.4 found it while reading the tables mechanically; the page confirms it. `gcad/kernels/wsn.py` closes such a production at the next `identifier =` and reports it, and the differential test expects exactly these two reports.
+
+## 2. Architecture
+
+```
+ file.stp ─► grammar.lark (Lark LALR)  ─► rewrite.toml ─► GCore: (step-model [header] (letrec ((#n (record ...)) ...)))
+     │                                                          │
+     │                                            prelude.gcore: records -> geometry graph (CSG, history,
+     │                                            parameters, expressions); explicit B-rep as one import node
+     │                                                          ▼
+     │                                              geometry graph ─► back-end M (mesh) / B (OCCT, exact)
+     └─► semantic checker "iso10303-21" (kernel.toml `checker`, FR-K9):
+           p21 reader ─► express.check (form) ─► express_eval.rules (WHERE, UNIQUE, global, INVERSE)
+           against the AP long form the header names (schema cache), or the resource parts
+           diagnostics with the span of each #n; origin "check": reported, never blocking the model
+
+ graph ─► gcad/iso10303/writer.py ─► parametric STEP (Part 42 CSG, Part 55 history, Part 108 parameters,
+           ISO 13584-20 expressions; AP242), read back by the kernel to the same graph hash (FR-G1)
+```
+
+The kernel is data: `kernel.toml`, `grammar.lark`, `rewrite.toml` (18 rules) and `prelude.gcore` (the interpreter of records, about 870 lines of GCore). It needs no `transform.py` and no trusted-only consent. What the engine lacked was added as generic features any kernel can use, documented in [`kernel-authoring.md`](../kernel-authoring.md):
+
+| Feature | Where | Why this kernel needed it |
+|---|---|---|
+| `letrec`: order-free, once-evaluated bindings; a duplicate or a cycle is named; without a body, the list of all values | [`evaluator.py`](../../src/gcad/core/evaluator.py) | `#12` used before `#12=`; dangling, duplicate and cyclic references with spans |
+| `record` values (lists that remember where they were written) and `(at record body)` | evaluator, [`builtins.py`](../../src/gcad/core/builtins.py) | geometry built by prelude code is attributed to the `#n` instance: click a face, the instance is selected |
+| `resolve`, `apply`, `contains`, `split`, `upper`, `lower`, `starts_with`, `parse_number`, `parse_value`, `warn`, `info`, `fail` | builtins | dispatch on entity names, read authoring hints, report diagnostics |
+| `import_source` and the `import` graph op; `Graph.blobs` | builtins, [`graph.py`](../../src/gcad/core/graph.py), both back-ends | explicit B-rep read by OpenCASCADE from the file itself; the graph keeps the file by its SHA-256 (M9's planned `import()` can share the op) |
+| named string decoders (`string:iso10303-21`) | [`grammar.py`](../../src/gcad/kernels/grammar.py) | `''`, `\\`, `\X2\…\X0\` and the other control directives |
+| kernel checkers (`checker = "iso10303-21"`) and diagnostics with `origin = "check"` | [`kernels/__init__.py`](../../src/gcad/kernels/__init__.py), [`pipeline.py`](../../src/gcad/pipeline.py) | the semantic layer (§1.3) without a kernel-specific `transform.py` |
+| trace mode: `Traced` numbers | [`trace.py`](../../src/gcad/core/trace.py) | the writer turns top-level numeric definitions into Part 108 parameters and the arithmetic on them into ISO 13584-20 expressions |
+| graph formats (`needs = "graph"`) | [`exporters/__init__.py`](../../src/gcad/exporters/__init__.py) | parametric STEP is written from the graph, with no back-end, so also in the browser |
+| WSN to Lark (`gcad grammar import`) | [`wsn.py`](../../src/gcad/kernels/wsn.py) | FR-K8; checks the hand-written grammar against the standard's own productions (§1.4) |
+
+Reuse of freecad-nxstyle (decided, not forked silently): `p21.py`, `express.py`, `express_eval.py`, `iso10303.py` and the dictionary tool are vendored unchanged in [`src/gcad/iso10303/_nxstyle`](../../src/gcad/iso10303/_nxstyle) (LGPL-2.1 relicensed to AGPL-3.0 under its section 3, attribution kept), so fixes can flow both ways; [`schemas.py`](../../src/gcad/iso10303/schemas.py) only points their cache at GCAD's. The parametric writer is GCAD's own, because nxstyle's `parametric.py` writes a FreeCAD-shaped model (sketches, pads, holes) rather than a CSG graph, but it copies nxstyle's instance layout for contexts, Part 55 sequences, Part 108 parameters and pcurve boundaries, which is known to pass every AP242 rule. `parametric.py`, `procedural_sketch.py` and the PMI modules are not vendored: the kernel reads their files through its own prelude.
+
+## 3. Decisions
+
+**(a) The instance graph becomes GCore through `letrec` and records.** Every instance is a binding `(#12 (record "#12" "KEYWORD" attribute...))`; the prelude's `step-model` receives all records and builds geometry from the representations. Rejected: one GCore function per entity called directly (natural to read, but references to instances no model uses would still be evaluated, unknown keywords would be fatal, and Part 108 overrides need every assignment before any geometry); a topological pre-pass in `kernel.toml` (less general than `letrec`, and still needs the records); `transform.py` (trusted-only, and the brief rules it out unless unavoidable).
+
+**(b) Grammar and semantics meet at the record.** Lark decides the exchange structure (§1.2); everything that needs another instance or a schema is the semantic layer (§1.3), run by the engine after parsing. Its violations are errors with `origin = "check"`: the console shows them and `gcad eval` exits non-zero, but the model is still built, so an OpenCASCADE file with the wrong AP242 protocol name (error 14 of §6) still opens.
+
+**(c) Explicit B-rep is read by OpenCASCADE, a file at a time.** The `import` op names the file's text by SHA-256; back-end B reads it with `STEPControl_Reader`, back-end M tessellates that and uses the mesh. Rejected: one import per solid entity, because OpenCASCADE 8 cannot transfer a single `MANIFOLD_SOLID_BREP` (`TransferEntity` refuses it, and asking the transient process for a result crashes). Consequence: an explicit solid inside a history (a Part 55 hybrid step) is refused with a diagnostic. In the browser there is no OpenCASCADE: B-rep files give a diagnostic that says so; CSG and procedural files work.
+
+**(d) EXPRESS stays a validation layer.** A kernel's job is to produce geometry; an EXPRESS schema has none. Schema browsing and checking are `gcad iso schema` and `gcad iso check`. Rejected for now: an `express` highlighting kernel (its grammar is Part 11 annex A, about 330 productions, ambiguous by design, §1.2).
+
+**(e) `.stp`, `.step` and `.p21` belong to the `iso10303` kernel.** What a file contains decides what is shown, not its extension: procedural (Part 55) first, then CSG, then explicit B-rep; the console says what was left out. The B-rep STEP export keeps `.step`; the parametric export is the format `step-parametric`, chosen by `-f`.
+
+**Authoring hints.** Part 42 stores placements, not the operation that made them (`rotate [0 0 90]` and `matrix` give the same axes), and its booleans are binary. To read its own files back to the same graph (FR-G1), the writer names each item after its graph node (`gcad:["box" [["center" false] ["size" [40 30 10]]]]`); the reader uses a hint only when the geometry agrees with it within 1e-9, so a file edited elsewhere, or a parameter changed by a slider, reads by its geometry. Rejected: deriving the operation from geometry alone (Euler angles are not unique; `rotate [180 0 0]` and `rotate [0 180 180]` are one matrix), and changing the graph's canonical form (it would change every existing kernel's hashes).
+
+**Interoperability.** A translation of an uncentred box, sphere or cylinder is written into the primitive's own placement, as other systems write it, rather than as a `SOLID_REPLICA`; freecad-nxstyle's FreeCAD importer reads such files (§7).
+
+## 4. Mapping
+
+| ISO 10303 entity | GCore built from it | Graph op | Back-ends |
+|---|---|---|---|
+| BLOCK, SPHERE, RIGHT_CIRCULAR_CYLINDER | `box`, `sphere`, `cylinder` placed by their axis placements | box, sphere, cylinder, translate/matrix | B exact, M mesh |
+| RIGHT_CIRCULAR_CONE | `cylinder :r1 base :r2 top`, base below the location (Part 42 6.4.15) | cylinder | B, M |
+| TORUS | `rotate_extrude` of a translated circle | rotate_extrude | B exact, M |
+| RIGHT_ANGULAR_WEDGE | `linear_extrude` of the trapezium | linear_extrude | B, M |
+| ELLIPSOID, ELLIPTIC_AREA | a sphere or circle of the first semi-axis, scaled | scale | B (spline surface), M |
+| RECTANGULAR_PYRAMID, TETRAHEDRON | `polyhedron`, faces wound from the points | polyhedron | B, M |
+| BOOLEAN_RESULT(_2D), CSG_SOLID(_2D), CSG_PRIMITIVE_SOLID_2D | `union`, `difference`, `intersection` (n-ary when the writer's hint says so) | union, difference, intersection | B, M |
+| HALF_SPACE_SOLID, BOXED_HALF_SPACE | a 100 m block on the material side of the plane, cut by the box domain | box, intersection | B, M |
+| SOLID_REPLICA + CARTESIAN_TRANSFORMATION_OPERATOR_3D | the transform (or the hinted `translate`, `rotate`, `scale`, `mirror`, `color`, `name`) | matrix etc. | B, M |
+| EXTRUDED_AREA_SOLID, REVOLVED_AREA_SOLID with CURVE_BOUNDED_SURFACE of polylines, trimmed lines and whole circles (pcurves or not) | `linear_extrude`, `rotate_extrude` of a polygon, rect or circle less its holes | linear_extrude, rotate_extrude | B, M |
+| CIRCULAR_AREA, RECTANGULAR_AREA, POLYGONAL_AREA | `circle`, `rect`, `polygon` | circle, rect, polygon | M (2D) |
+| SOLID_WITH_FLAT_BOTTOM / STEPPED / CONICAL_BOTTOM_ROUND_HOLE, + SOLID_WITH_THROUGH_DEPRESSION, SOLID_WITH_CIRCULAR / RECTANGULAR_POCKET, SOLID_WITH_CIRCULAR_PROTRUSION (no blends or draft) | the base solid less (or plus) cylinders, a cone, a box | difference, union | B, M |
+| PROCEDURAL_SHAPE_REPRESENTATION / PROCEDURAL_REPRESENTATION_SEQUENCE (Part 55) | the last element not suppressed; selections skipped | (that element's) | B, M |
+| Part 108 parameters, FREE_FORM_ASSIGNMENT, EQUAL_PARAMETER_CONSTRAINT, INSTANCE_ATTRIBUTE_REFERENCE | the bound attribute takes the assignment's value; a slider on the parameter's value drives it | (attribute values) | all |
+| ISO 13584-20 numeric expressions (+ − × /, DIV, MOD, power, sqrt, abs, exp, logarithms, trigonometry in radians, min, max) | GCore arithmetic | (values) | all |
+| Part 112 CREATE_RECTANGLE, _POLYGON, _POLYLINE (closed), _CIRCLE_CENTRE_POINT, _2_POINTS, _3_POINTS | 2D shapes, combined even-odd; open curves reported, not shown | polygon, circle | M (2D) |
+| STYLED_ITEM … COLOUR_RGB on a solid | `color` | color | B, M |
+| MANIFOLD_SOLID_BREP and the rest of explicit B-rep | `import_source` (the whole file) | import | B; M through B's tessellation |
+
+The full list, with the status and reason of every entity, is the coverage matrix (§5).
+
+## 5. Coverage
+
+[`iso10303-coverage.tsv`](iso10303-coverage.tsv) is generated by [`tools/iso10303_coverage.py`](../../tools/iso10303_coverage.py) from the compiled AP242 long form and the resource parts: 2480 entities, of which 141 supported, 357 delegated (explicit B-rep read by OpenCASCADE), 150 refused with a diagnostic and 1832 out of scope with a reason (product data, presentation, kinematics, tessellation, Part 50 maths, constraint solving, and PMI, planned). [`tests/test_iso10303_coverage.py`](../../tests/test_iso10303_coverage.py) fails if an entity of either schema has no row, if a row has no status or reason, or if a supported entity is in no fixture the kernel evaluates. The matrix carries only entity names.
+
+723 out-of-scope entities share the generic reason "outside parametric shape exchange"; splitting that group further is follow-up work, not a gap in the check.
+
+**PMI, GD&T and MBD (requested 2026-10-27, after this brief).** Viewing a STEP file's annotations is planned as M15 (SPEC §12.3): semantic PMI (DATUM, GEOMETRIC_TOLERANCE and its subtypes, DIMENSIONAL_SIZE/LOCATION with their tolerances) listed by the console and attached to the faces they apply to, and graphical PMI (ANNOTATION_CURVE_OCCURRENCE, TESSELLATED_ANNOTATION_OCCURRENCE, DRAUGHTING_CALLOUT) drawn in the viewer as polylines in their own presentation planes. freecad-nxstyle's `pmi.py`, `gdt.py` and `ap242.py` (pure Python) are the starting point; the 158 PMI entities carry that status in the matrix.
+
+## 6. Errors found in the standards
+
+Cross-checked against the 14 recorded with freecad-nxstyle. New in this work:
+
+15. **ISO 10303-21:2002 Table 3, DATA_SECTION** lacks the full stop WSN requires (§1.6).
+16. **ISO 10303-21:2002 Table 1, CHARACTER** lacks it too. Found by the mechanical WSN reader (§1.4), confirmed on the page.
+17. **AP242 long form, VALID_CSG_2D_PRIMITIVES.** It takes a CSG_SOLID_2D and recurses into a boolean's operands, which `boolean_operand_2d` makes primitives or BOOLEAN_RESULT_2Ds, never CSG_SOLID_2Ds, so `csg_solid_2d` WR1 fails for every 2D CSG solid whose root is a boolean. [`check.py`](../../src/gcad/iso10303/check.py) reports that violation as a warning only when every leaf is a primitive the function accepts.
+
+## 7. Verification (as of this branch)
+
+- The 8 bundled examples that have an ISO 10303-42 form write as parametric STEP and read back to the same graph hash; 2 are refused with their reason (a scaled extrusion, a section). Each written file: AP242 long form, every rule evaluated, 0 errors, 0 not evaluated (warnings only for the documented contradictions); freecad-nxstyle's own checker gives the same counts.
+- STEPcode `p21read` (built for the AP242 long form): 0 errors, 0 warnings on every written file without parameters and on the fixtures; it crashes on files with Part 108 parameters (complex instances of 15 partial records), and passes once those are written as simple instances in a copy. It does not read Part 112 (not in AP242).
+- FreeCAD 1.1.4 with freecad-nxstyle's importer rebuilds the AC-2 file: 11497.345175425633 mm³ (12000 − 160π), and 11214.6018366 mm³ (12000 − 250π) after its spreadsheet's `hole_d` is set to 10. It does not yet read a rotated SOLID_REPLICA (the bracket), and refuses aliases with a hyphen: follow-ups in freecad-nxstyle.
+- Exact volumes on back-end B match the analytic values to 1e-6 for the fixtures (`tests/test_iso10303.py`).
+
+## 8. Risks and what remains
+
+- A file of several hundred thousand instances is parsed by Lark and interpreted in GCore; the studio evaluates rules only up to 5000 instances (`gcad iso check` has no limit). Not yet measured on large production files.
+- Assemblies: explicit B-rep assemblies are composed by OpenCASCADE; CSG or procedural assemblies (mapped items, representation relationships with transformations) are not composed by the prelude yet.
+- Part 21 edition 3 (anchor, reference and signature sections): out of scope, as the reference set has no copy of the 2016 edition to trace a grammar to.
+- Hybrid output (parametric history plus explicit B-rep in one file, Part 55 5.4.1) is not written yet; the reader shows such files' history and reports the B-rep.
+- The schemas are not in the repository. Committing a compiled dictionary (freecad-nxstyle does, for the resource parts) is Foad's decision; until then CI checks against the AP242 long form only when it fetches it, and the resource-part checks run locally.

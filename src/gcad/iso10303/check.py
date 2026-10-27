@@ -25,7 +25,7 @@ from gcad.iso10303._nxstyle import express, express_eval, p21
 from gcad.iso10303._nxstyle import iso10303 as nx
 
 # A contradiction in the standards found while making GCAD's writer pass every rule (design note
-# §6, number 16): the AP242 long form's VALID_CSG_2D_PRIMITIVES takes a CSG_SOLID_2D but recurses
+# §6, number 17): the AP242 long form's VALID_CSG_2D_PRIMITIVES takes a CSG_SOLID_2D but recurses
 # into a boolean's operands, which boolean_operand_2d makes primitives or BOOLEAN_RESULT_2Ds, never
 # a CSG_SOLID_2D; so csg_solid_2d WR1 fails for every 2D CSG solid whose root is a boolean. The
 # violation is downgraded only when that is all it is: the root is a BOOLEAN_RESULT_2D and every
