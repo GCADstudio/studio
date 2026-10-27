@@ -71,9 +71,16 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Example scripts of process kernels run inside their own language's environment, which
+# supplies names such as CadQuery's show_object.
+"src/gcad/kernels/*/examples/*" = ["F821"]
+
 [tool.mypy]
 python_version = "3.11"
 files = ["src/gcad"]
+# The programs of process kernels are separate scripts, run by their own interpreter.
+exclude = ['src/gcad/kernels/[^/]+/(program\.py|examples/)']
 warn_unused_ignores = true
 disallow_untyped_defs = true
 

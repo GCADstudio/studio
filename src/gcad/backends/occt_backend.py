@@ -8,6 +8,9 @@ explicit $fn of 3 to 16 is the polygon OpenSCAD would make (a hex nut stays a he
 from __future__ import annotations
 
 import math
+import tempfile
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -42,8 +45,10 @@ from OCP.BRepPrimAPI import (
 from OCP.BRepTools import BRepTools
 from OCP.gp import gp_Ax1, gp_Ax2, gp_Circ, gp_Dir, gp_GTrsf, gp_Pnt, gp_Trsf, gp_Vec
 from OCP.GProp import GProp_GProps
+from OCP.IFSelect import IFSelect_RetDone
 from OCP.Message import Message, Message_Gravity
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+from OCP.STEPControl import STEPControl_Controller, STEPControl_Reader
 from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED, TopAbs_SHELL, TopAbs_WIRE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
@@ -54,6 +59,7 @@ try:  # OCP 8 (OCCT 8) exposes NCollection lists as generic containers
 except ImportError:  # pragma: no cover - OCP 7.x
     from OCP.TopTools import TopTools_ListOfShape
 
+from gcad.core import blobs
 from gcad.core.graph import ATTRIBUTE_OPS, Graph, Node, default_tolerance, node_matrix
 from gcad.diagnostics import GcadError
 from gcad.mesh import RGBA, Mesh, MeshGroup
@@ -240,6 +246,7 @@ class _Builder:
             "polygon": self.polygon,
             "linear_extrude": self.linear_extrude,
             "rotate_extrude": self.rotate_extrude,
+            "import": self.imported,
         }
 
     def build(self, node: Node) -> TopoDS_Shape | None:
@@ -331,6 +338,17 @@ class _Builder:
         if not BRepCheck_Analyzer(solid).IsValid():
             raise GcadError("polyhedron is not a closed, consistently oriented solid", node.span)
         return solid
+
+    def imported(self, node: Node) -> TopoDS_Shape:
+        fmt = str(node.arg("format"))
+        if fmt != "step":
+            # FR-B4: a solid made of triangles is never passed off as exact geometry.
+            raise GcadError(
+                f"this model is a {fmt.upper()} mesh, not exact geometry, so it cannot be "
+                "exported to STEP or IGES; choose a mesh format",
+                node.span,
+            )
+        return read_step(str(node.arg("sha256")))
 
     # -- 2D primitives, as planar faces in z = 0 ---------------------------------------------
 
@@ -445,6 +463,30 @@ class _Builder:
         profile = _transform(section, lift)
         axis = gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1))
         return BRepPrimAPI_MakeRevol(profile, axis, math.radians(node.num("angle"))).Shape()
+
+
+@lru_cache(maxsize=8)
+def read_step(digest: str) -> TopoDS_Shape:
+    """The STEP file stored under `digest`, as one shape in millimetres."""
+    data = blobs.get(digest)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "model.step"
+        path.write_bytes(data)
+        STEPControl_Controller.Init_s()
+        reader = STEPControl_Reader()
+        if reader.ReadFile(str(path)) != IFSelect_RetDone:
+            raise GcadError("the STEP file could not be read")
+        reader.TransferRoots()
+        shape = reader.OneShape()
+    if shape is None or shape.IsNull() or not _shapes(shape, TopAbs_FACE):
+        raise GcadError("the STEP file holds no faces")
+    return shape
+
+
+def step_mesh(digest: str, tolerance: float) -> tuple[np.ndarray, np.ndarray]:
+    """A STEP solid tessellated for the mesh back-end."""
+    mesh = OcctModel(read_step(digest), 3, tolerance, digest, None, None).mesh()
+    return mesh.vertices, mesh.triangles
 
 
 def _root_attributes(graph: Graph) -> tuple[RGBA | None, str | None]:

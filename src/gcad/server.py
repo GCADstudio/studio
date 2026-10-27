@@ -14,6 +14,7 @@ import json
 import mimetypes
 import os
 import secrets
+import socket
 import sys
 import tempfile
 import threading
@@ -35,7 +36,7 @@ from gcad.core.evaluator import Limits
 from gcad.core.sexpr import to_text
 from gcad.diagnostics import Diagnostic, GcadError
 from gcad.exporters import FORMATS, ExportJob, export
-from gcad.kernels import BUNDLED, Kernel, discover, kernel_for
+from gcad.kernels import BUNDLED, Kernel, discover, is_trusted, kernel_for, trust
 from gcad.pipeline import evaluate_source
 
 WEB = Path(__file__).parent / "web"
@@ -118,6 +119,21 @@ class Studio:
         kernels, _ = discover()
         return [k.describe() for k in kernels.values()]
 
+    def folder_of(self, path: str | None) -> Path | None:
+        """The folder a document lives in, for languages that include other files."""
+        if not path:
+            return None
+        try:
+            return self.resolve(path).parent
+        except RpcError:
+            return None
+
+    def rpc_kernel_trust(self, kernel: str) -> dict[str, object]:
+        """The user agreed to let this kernel's program run (FR-K6, FR-K7)."""
+        k = self.kernel(kernel)
+        trust(k)
+        return {"kernel": k.id, "folder": str(k.path)}
+
     def rpc_file_list(self) -> dict[str, object]:
         kernels, _ = discover()
         extensions = {ext: k.id for k in kernels.values() for ext in k.extensions}
@@ -125,7 +141,8 @@ class Studio:
             {"path": f"{EXAMPLE_PREFIX}{k.id}/examples/{p.name}", "name": p.name, "kernel": k.id}
             for k in kernels.values()
             for p in k.examples()
-            if k.path.resolve().is_relative_to(BUNDLED.resolve())
+            # In the browser, kernels that run a program cannot work; leave their examples out.
+            if k.bundled and not (k.is_process and sys.platform == "emscripten")
         ]
         # minscad, the lead language (SPEC §11), first; then the others by name.
         examples.sort(key=lambda e: (e["kernel"] != "minscad", e["kernel"], e["name"]))
@@ -135,10 +152,12 @@ class Studio:
             # Prune hidden and generated folders before descending (a .venv has thousands).
             dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in skip)
             for name in sorted(names):
-                ext = os.path.splitext(name)[1].lower()
-                if ext in extensions:
+                lower = name.lower()
+                matches = [e for e in extensions if lower.endswith(e)]
+                if matches:  # the longest extension wins: .cq.py before .py
                     rel = Path(folder, name).relative_to(self.root).as_posix()
-                    files.append({"path": rel, "name": name, "kernel": extensions[ext]})
+                    kernel_id = extensions[max(matches, key=len)]
+                    files.append({"path": rel, "name": name, "kernel": kernel_id})
             if len(files) >= 500:
                 break
         return {"root": str(self.root), "files": files, "examples": examples}
@@ -166,9 +185,25 @@ class Studio:
         return {"path": target.relative_to(self.root).as_posix(), "name": target.name}
 
     def rpc_document_evaluate(
-        self, kernel: str, source: str, file: str = "untitled", gcore: bool = False
+        self,
+        kernel: str,
+        source: str,
+        file: str = "untitled",
+        gcore: bool = False,
+        path: str | None = None,
     ) -> dict[str, object]:
         k = self.kernel(kernel)
+        if not is_trusted(k):
+            return {
+                "ok": False,
+                "diagnostics": [],
+                "ms": 0,
+                "trust": {
+                    "kernel": k.id,
+                    "folder": str(k.path),
+                    "command": " ".join(k.command),
+                },
+            }
         started = time.perf_counter()
         stop = threading.Event()
         with self.newest_lock:
@@ -177,7 +212,8 @@ class Studio:
         with self.lock:
             if stop.is_set():  # replaced while waiting
                 return {"ok": False, "superseded": True, "diagnostics": [], "ms": 0}
-            evaluated = evaluate_source(source, file, k, replace(self.limits, stop=stop))
+            limits = replace(self.limits, stop=stop)
+            evaluated = evaluate_source(source, file, k, limits, self.folder_of(path))
             result: dict[str, object] = {"ok": False}
             if stop.is_set():
                 result["superseded"] = True
@@ -260,13 +296,14 @@ class Studio:
         format: str,
         file: str = "untitled",
         options: dict[str, object] | None = None,
+        path: str | None = None,
     ) -> dict[str, object]:
         fmt = FORMATS.get(format)
         if fmt is None or not fmt.available:
             raise RpcError(f"format '{format}' is not available")
         k = self.kernel(kernel)
         with self.lock:
-            evaluated = evaluate_source(source, file, k, self.limits)
+            evaluated = evaluate_source(source, file, k, self.limits, self.folder_of(path))
             graph = evaluated.result.graph
             if not evaluated.result.ok or graph is None:
                 raise RpcError("the model has errors; fix them before exporting")
@@ -392,13 +429,25 @@ def make_handler(studio: Studio, token: str, host_names: set[str]) -> type[BaseH
     return Handler
 
 
+class _ExclusiveServer(ThreadingHTTPServer):
+    """On Windows, SO_REUSEADDR lets a second server bind a port that is already serving, and
+    requests then go to either one. Bind exclusively there, so a taken port is an error."""
+
+    allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self) -> None:
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 class StudioServer:
     def __init__(
         self, root: Path, port: int = 0, token: str | None = None, limits: Limits | None = None
     ) -> None:
         self.token = token or secrets.token_urlsafe(24)
         self.studio = Studio(root, limits)
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
+        self.httpd = _ExclusiveServer(("127.0.0.1", port), BaseHTTPRequestHandler)
         self.port = self.httpd.server_address[1]
         hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}
         self.httpd.RequestHandlerClass = make_handler(self.studio, self.token, hosts)

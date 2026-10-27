@@ -21,6 +21,7 @@ else:
 
 from gcad.core.graph import Graph, Node, circle_segments, default_tolerance, node_matrix
 from gcad.diagnostics import GcadError
+from gcad.importers import imported_mesh
 from gcad.mesh import RGBA, Mesh, MeshGroup
 
 # manifold3d ships no type stubs; a shape is a Manifold (3D) or a CrossSection (2D).
@@ -106,6 +107,8 @@ class _Realizer:
         op = node.op
         if node.dim == 3 and op in ("box", "sphere", "cylinder", "polyhedron"):
             return self.tag(self.primitive3(node), node, color)
+        if op == "import":
+            return self.tag(self.imported(node), node, color)
         if op == "rect":
             return mf.CrossSection.square(node.vec("size"), bool(node.arg("center")))
         if op == "circle":
@@ -168,6 +171,31 @@ class _Realizer:
         if result.status() != mf.Error.NoError:
             raise GcadError(
                 f"polyhedron is not a closed, consistently oriented solid ({result.status().name})",
+                node.span,
+            )
+        return result
+
+    def imported(self, node: Node) -> mf.Manifold:
+        """Geometry handed over as a file. A STEP solid is tessellated by OpenCASCADE."""
+        fmt, digest = str(node.arg("format")), str(node.arg("sha256"))
+        if fmt == "step":
+            try:
+                from gcad.backends.occt_backend import step_mesh
+            except ImportError:
+                raise GcadError(
+                    "this model is a STEP solid, and OpenCASCADE is not installed here", node.span
+                ) from None
+            vertices, tris = step_mesh(digest, self.tolerance)
+        else:
+            vertices, tris = imported_mesh(digest, fmt)
+        mesh = mf.Mesh(
+            vert_properties=np.asarray(vertices, dtype=np.float32),
+            tri_verts=np.asarray(tris, dtype=np.uint32),
+        )
+        result = mf.Manifold(mesh)
+        if result.status() != mf.Error.NoError:
+            raise GcadError(
+                f"the imported {fmt.upper()} mesh is not a closed solid ({result.status().name})",
                 node.span,
             )
         return result
