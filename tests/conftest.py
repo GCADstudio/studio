@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -29,3 +30,12 @@ def error_of(source: str, limits: Limits | None = None) -> str:
 @pytest.fixture
 def examples() -> Path:
     return EXAMPLES
+
+
+def reader_unusable(reason: str) -> None:
+    """An independent reader is installed but cannot run here (for example it lacks a system
+    library). Skip on a developer machine; fail in CI, where GCAD_REQUIRE_READERS is set,
+    so coverage cannot silently disappear."""
+    if os.environ.get("GCAD_REQUIRE_READERS"):
+        pytest.fail(reason)
+    pytest.skip(reason)

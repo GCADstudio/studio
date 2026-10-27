@@ -9,10 +9,34 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import reader_unusable
 
 from gcad.pipeline import export_file
 
 EXACT = 12000 - 160 * math.pi  # SPEC AC-2 test part, mm^3
+
+
+def meshlab_load(path: Path):  # type: ignore[no-untyped-def]
+    pymeshlab = pytest.importorskip("pymeshlab")
+    ms = pymeshlab.MeshSet()
+    try:
+        ms.load_new_mesh(str(path))
+    except pymeshlab.PyMeshLabException as exc:
+        if "Unknown format" in str(exc):
+            # MeshLab's importer plugins need libOpenGL; without it they do not load.
+            reader_unusable(f"MeshLab cannot read {path.suffix}: its plugins did not load")
+        raise
+    return ms
+
+
+def import_gmsh():  # type: ignore[no-untyped-def]
+    try:
+        import gmsh
+    except ImportError:
+        pytest.skip("gmsh has no build for this platform")
+    except OSError as exc:  # the wheel is installed but a system library (libGLU) is missing
+        reader_unusable(f"gmsh cannot load: {exc}")
+    return gmsh
 
 
 def volume(v: np.ndarray, f: np.ndarray) -> float:
@@ -46,11 +70,9 @@ MESHLAB_CASES = [
 def test_meshlab_reads_back(
     test_part: Path, tmp_path: Path, ext: str, scale: float, bounds: list[list[float]]
 ) -> None:
-    pymeshlab = pytest.importorskip("pymeshlab")
     out = tmp_path / f"part.{ext}"
     triangles = export(test_part, out)
-    ms = pymeshlab.MeshSet()
-    ms.load_new_mesh(str(out))
+    ms = meshlab_load(out)
     mesh = ms.current_mesh()
     v, f = mesh.vertex_matrix(), mesh.face_matrix()
     assert len(f) == triangles
@@ -76,14 +98,11 @@ def test_collada_units_and_colours(examples: Path, tmp_path: Path) -> None:
 
 
 def test_x3d_with_two_colours_reads_whole(tmp_path: Path) -> None:
-    pymeshlab = pytest.importorskip("pymeshlab")
     src = tmp_path / "two.gcsg"
     src.write_text('(color "red" (box 10)) (color "blue" (translate [20 0 0] (box 4)))')
     out = tmp_path / "two.x3d"
     triangles = export(src, out)
-    ms = pymeshlab.MeshSet()
-    ms.load_new_mesh(str(out))
-    assert ms.current_mesh().face_number() == triangles
+    assert meshlab_load(out).current_mesh().face_number() == triangles
     assert out.read_text().count("<Shape>") == 2
 
 
@@ -102,7 +121,7 @@ def test_unv_reads_back_with_pyuff(test_part: Path, tmp_path: Path) -> None:
 
 
 def test_unv_reads_back_with_gmsh(test_part: Path, tmp_path: Path) -> None:
-    gmsh = pytest.importorskip("gmsh")
+    gmsh = import_gmsh()
     out = tmp_path / "part.unv"
     triangles = export(test_part, out)
     gmsh.initialize(readConfigFiles=False)

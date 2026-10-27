@@ -44,10 +44,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: System libraries for the test-only readers (MeshLab, Gmsh)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopengl0 libglu1-mesa
       - run: python -m pip install -e ".[dev]"
       - name: Record platform
         run: python -c "import platform, sys; print(platform.platform(), platform.machine(), sys.version)"
-      - run: pytest -q
+      - run: pytest -q -rs
+        env:
+          GCAD_REQUIRE_READERS: "1"
       - name: CLI smoke test (no display, no GPU)
         shell: bash
         run: |
