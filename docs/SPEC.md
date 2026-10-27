@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 milestones (M8 to M13, §12.2) and their acceptance criteria (AC-13 to AC-20, §10) are proposed and await approval. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -292,6 +292,17 @@ Web deployment mode (M7, §4.1), checked in CI against the built site served by 
 11. **AC-11 Web safety:** while a runaway source (`(f 60)` with exponential recursion, csg kernel) evaluates, the page stays responsive, and the next edit replaces it and shows its model before the 10 s limit would have stopped the runaway.
 12. **AC-12 Web parity:** every bundled example gives the same triangle count, bounds, volume and area in the browser as on the native back-end M (within 1e-6 relative).
 
+v0.2 (proposed, §12.2):
+
+13. **AC-13 OpenSCAD as a process kernel:** every bundled minscad example, opened as a `.scad` file with the `openscad` kernel, gives the same graph hash as minscad once spans are stripped, and so the same exports. A file that uses `text()` renders through OpenSCAD's own mesh, the console says so, and STEP export of it is refused (FR-B4). Checked in CI on a runner with OpenSCAD installed; skipped elsewhere.
+14. **AC-14 CadQuery as a process kernel:** a CadQuery script for the AC-2 part exports to STEP and IGES and re-reads with volume 12,000 − 160π mm³ within 1e-6 relative. A script that loops forever is stopped at the wall-time limit with a diagnostic, and the studio stays responsive. Opening a process kernel from an untrusted folder asks for consent first.
+15. **AC-15 OpenSCAD parity, second set:** new examples using `hull`, `minkowski`, `offset`, `include`/`use` and `import` (STL and DXF) are valid OpenSCAD files and match OpenSCAD 2021.01 within the tolerances of `tests/test_openscad_parity.py`, in minscad and through the `openscad` kernel's `.csg` route (no mesh fallback).
+16. **AC-16 Notebooks:** a `.gcadnb` document with a minscad cell, a csg cell and a Markdown cell runs in server mode and in web mode with the same results (triangle count, bounds, volume). Saving it twice without changes gives identical bytes.
+17. **AC-17 Jupyter:** `jupyter nbconvert --execute` runs a notebook that uses the `gcad` Jupyter kernel with no display. Each geometry cell's output contains a binary glTF that reads back with trimesh and matches the CLI export's volume, and the 3D view in JupyterLab renders with no network request (headless Chrome).
+18. **AC-18 Exact drawings:** on back-end B, a section of the AC-2 part at z = 5 exports to DXF as one CIRCLE of radius 4 and one closed 40 × 30 outline, exact within 1e-9 mm, and to SVG with an arc, not a polygon. A hidden-line front view of the bracket puts visible and hidden edges on separate DXF layers and SVG classes.
+19. **AC-19 More formats:** PLY, OFF and 3MF re-read with trimesh as in AC-3 and are byte-reproducible as in AC-7. A tetrahedral UNV re-reads with Gmsh with a total element volume within 0.5 % of AC-2. The DWG plug-in, where a converter is installed, converts DWG back to DXF with every vertex equal to the source; this check is local only.
+20. **AC-20 Release on PyPI:** `pip install gcad-studio==0.2.0` from PyPI into a clean environment works on all six CI runners and `gcad --version` prints 0.2.0 (NFR-4).
+
 ## 11. Decisions to confirm before development
 
 1. **Stack:** Python core + local browser UI (recommended, §4) versus C++/Qt as discussed in 2018.
@@ -300,6 +311,8 @@ Web deployment mode (M7, §4.1), checked in CI against the built site served by 
 4. **First surface language:** `minscad` (OpenSCAD subset) as the lead example, so OpenSCAD users can try it without learning anything new.
 
 ## 12. Delivery plan
+
+### 12.1 v0.1 (done)
 
 | Milestone | Content | Exit check |
 |---|---|---|
@@ -311,6 +324,42 @@ Web deployment mode (M7, §4.1), checked in CI against the built site served by 
 | M5 | Browser studio (FR-U1–U6) | Manual walk-through on Windows, macOS, Linux; headless UI check in CI |
 | M6 | Determinism, limits, docs, first release `v0.1.0` | AC-6, AC-7, AC-8 |
 | M7 | Web deployment mode (§4.1): Pyodide worker, Manifold WebAssembly binding, static-site build, GitHub Pages workflow | AC-9 to AC-12 in CI (headless Chrome); screenshots in both themes |
+
+v0.1.0 was released on 2026-10-27 as a GitHub Release (wheel and sdist). The PyPI job is built but switched off, so NFR-4's `pip install gcad-studio` is not met yet.
+
+### 12.2 v0.2 (proposed 2026-10-27, awaiting approval)
+
+Goal: open OpenSCAD and CadQuery files as they are, make the notebook in "Jupyter for CAD" real, and draw from exact geometry. Each milestone lands as one pull request with its acceptance criteria in CI, and v0.2.0 is published on PyPI.
+
+| Milestone | Content | Exit check |
+|---|---|---|
+| M8 | **Process kernels** (FR-K7, §7.2), server mode only: a runner that starts the child in its own working folder, speaks the stdio protocol, enforces the FR-C6 wall-time limit by ending the process, and asks for consent as for trusted-only kernels (FR-K6). Two bundled process kernels. **`openscad`** uses the OpenSCAD the user has installed, found on PATH or in the standard install folders. It turns the file into OpenSCAD's `.csg` export and parses that with the minscad grammar and a prelude for `multmatrix`, `group`, `render` and the other `.csg` operations. For operations the graph does not have yet, it uses OpenSCAD's own mesh of the whole model, and the console says so. **`cadquery`** runs a CadQuery script in a separate Python environment that the user names (`GCAD_CADQUERY_PYTHON`) and reads back the STEP file the script writes (`step_path`) on back-end B. | AC-13, AC-14 |
+| M9 | **OpenSCAD parity.** New graph operations on back-end M: `hull`, `minkowski` and 2D `offset` (`r`, `delta`, `chamfer`). Back-end B reports them as not supported (FR-B4). minscad gains `include`/`use` (paths relative to the file, inside the served folder), `if` and `each` in list comprehensions, `intersection_for`, `import()` of STL, OFF and DXF (STEP on back-end B), and OpenSCAD's rule that the last assignment wins in the whole scope. `text()` stays with the `openscad` kernel, because fonts are out of scope. | AC-15 |
+| M10 | **Notebooks** (FR-U10). In the studio, `.gcadnb` documents hold Markdown cells and code cells, each code cell bound to a kernel. All cells add to one shared scene, and each cell shows its own diagnostics, view and measurements. The file is JSON with sorted keys and stores no outputs by default, so it diffs cleanly in git. A Jupyter kernel, `gcad`, runs the same cells in JupyterLab and outputs a binary glTF plus a self-contained viewer that needs no network. | AC-16, AC-17 |
+| M11 | **Drawings from exact geometry.** On back-end B: sections on any plane and projections, keeping analytic curves as DXF CIRCLE and ARC entities and as SVG arcs. Hidden-line views for the standard views (FR-B6, OCCT HLR). Rulers in the 2D view (FR-U9). The second half of FR-U7: selecting source highlights the geometry it made. | AC-18 |
+| M12 | **More formats.** PLY, OFF and 3MF with our own writers (from C to S). Tetrahedral UNV through Gmsh, an optional dependency (§8.1). DWG as an optional plug-in that drives a converter the user installs (§8.3): ODA File Converter (free of charge, proprietary, never bundled) or LibreDWG's `dxf2dwg`, whose write support stops at R2004. 3D PDF stays a research item. | AC-19 |
+| M13 | **Release v0.2.0 on PyPI.** The owner registers the repository as a trusted publisher for `gcad-studio` on pypi.org and sets `PUBLISH_TO_PYPI`. The README installs from PyPI, and the web studio shows its version. | AC-20, with AC-1 to AC-19 green on the tag |
+
+Alongside these milestones, a separate study, **R1: exact geometry in the browser**, makes a decision only. Today the web mode cannot export STEP or IGES (FR-W3). The candidate follows the FR-W2 pattern: an OCCT WebAssembly build behind a small Python binding that offers the part of OCP that `occt_backend.py` uses. npm on 2026-10-27:
+
+- `opencascade.js`: 1.1.1 stable, last updated March 2023.
+- The `@taucad/opencascade.js` fork: 3.0.0 betas on OCCT 8, last published July 2026.
+- `occt-import-js`: reads files only.
+
+R1 measures download size and the API coverage the binding needs, and tries to write the AC-2 part as STEP in headless Chrome. It ends with a go or no-go recorded in §4.1. If it is a go, the implementation is planned for v0.3.
+
+Facts checked on 2026-10-27 that shape this plan:
+
+- CadQuery 2.8.0 requires `cadquery-ocp >=7.9.3.1, <8.0`, while gcad requires `>=8.0.1`, so CadQuery cannot share gcad's environment and runs as a process kernel.
+- OpenSCAD 2021.01's `.csg` export keeps `text()`, `hull()`, `minkowski()` and `offset()` as operations rather than resolving them into geometry, so M8's mesh fallback covers them until M9 adds hull, Minkowski and offset to the graph.
+- The `manifold3d` wheel provides `hull`, `minkowski_sum` and `CrossSection.offset`.
+
+For review:
+
+1. **Order:** M8 comes first because it opens every existing OpenSCAD file at once. M9 then shrinks M8's mesh fallback.
+2. **Process kernels are not a sandbox.** They run the user's code with the user's rights. The plan relies on consent, a separate working folder and the time limit.
+3. **M13 needs the owner's two steps** on pypi.org and in the repository settings.
+4. **Not in v0.2:** assemblies and PMI, fillets and chamfers, CAM, CAE decks, the node editor, an LSP bridge, ACIS, PHIGS and 3D PDF.
 
 ## 13. Glossary
 
