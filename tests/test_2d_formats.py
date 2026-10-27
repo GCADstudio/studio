@@ -244,17 +244,41 @@ def test_cgm_structure_and_coordinates(source: Path, tmp_path: Path) -> None:
 
 
 def soffice() -> str | None:
-    return shutil.which("soffice") or shutil.which("libreoffice")
+    """LibreOffice on PATH, else where its installers put it (they do not add it to PATH on
+    Windows or macOS). On Windows soffice.com is the console build that reports to stdout."""
+    found = shutil.which("soffice") or shutil.which("libreoffice")
+    if found:
+        return found
+    candidates = [Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")]
+    for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if root:
+            candidates.append(Path(root) / "LibreOffice" / "program" / "soffice.com")
+    return next((str(p) for p in candidates if p.is_file()), None)
+
+
+def _unit_boxes(boxes: np.ndarray) -> np.ndarray:
+    """Bounding boxes (x0, y0, x1, y1) scaled so that their union is the unit square, sorted
+    by centre: what is left is the layout, independent of where and how large it is drawn."""
+    lo, hi = boxes[:, :2].min(axis=0), boxes[:, 2:].max(axis=0)
+    unit = (boxes - np.tile(lo, 2)) / np.tile(hi - lo, 2)
+    centres = (unit[:, :2] + unit[:, 2:]) / 2
+    return unit[np.lexsort(np.round(centres, 3).T[::-1])]
 
 
 @pytest.mark.parametrize("ext", ["cgm", "dxf"])
 def test_libreoffice_reads(tmp_path: Path, ext: str) -> None:
     """LibreOffice imports CGM and DXF with its own filters. Converted to PDF, what it strokes
-    must be the plate: its outline sets the extent of everything drawn, 80 x 50 mm.
+    must be the plate's outlines in the plate's layout, in a dark colour.
 
     PDF rather than SVG: LibreOffice's SVG export adds invisible bounding-box and clip
     rectangles for every shape and for the page, so "the largest shape" there is LibreOffice's
-    page structure, not our geometry. A PDF holds only what is painted."""
+    page structure, not our geometry. A PDF holds only what is painted.
+
+    Scale and position are LibreOffice's, not the file's: its DXF import scales every drawing
+    so that its longer side is 100 mm (fScale in idxf/dxf2mtf.cxx), and its CGM import ignores
+    the metric scaling and fits every picture to a fixed 280 x 210 mm area (gnOutdx/gnOutdy in
+    icgm/cgm.cxx), which overflows the default 16:9 Impress slide for a wide drawing. So the
+    layout is checked, not the size; and only the DXF drawing must lie on the page."""
     exe = soffice()
     if exe is None:
         if os.environ.get("GCAD_REQUIRE_LIBREOFFICE"):
@@ -288,11 +312,19 @@ def test_libreoffice_reads(tmp_path: Path, ext: str) -> None:
     assert stroked, "LibreOffice drew nothing"
     for o in stroked:  # dark lines, for the white page (CGM leaves colours to the device)
         assert np.max(np.atleast_1d(o.stroking_color or 0)) < 0.5, o.stroking_color
-    box = np.array([o.bbox for o in stroked], dtype=float)
-    width = box[:, 2].max() - box[:, 0].min()
-    height = box[:, 3].max() - box[:, 1].min()
-    # 1% covers the hairline's width at whatever scale LibreOffice places the drawing.
-    assert width / height == pytest.approx(80 / 50, rel=1e-2)
+    drawn = np.array([o.bbox for o in stroked], dtype=float)
+    model = np.array(
+        [[*c.min(axis=0), *c.max(axis=0)] for c in model_contours(SOURCES["plate"])], dtype=float
+    )
+    assert len(drawn) == len(model)  # the plate and its five cut-outs, nothing else
+    # 0.5% of the plate's size: a hole or slot in the wrong place or of the wrong size fails.
+    assert np.allclose(_unit_boxes(drawn), _unit_boxes(model), atol=5e-3)
+    width = drawn[:, 2].max() - drawn[:, 0].min()
+    assert width / (drawn[:, 3].max() - drawn[:, 1].min()) == pytest.approx(80 / 50, rel=5e-3)
+    if ext == "dxf":
+        x0, y0, x1, y1 = page.bbox
+        assert x0 <= drawn[:, 0].min() and drawn[:, 2].max() <= x1
+        assert y0 <= drawn[:, 1].min() and drawn[:, 3].max() <= y1
 
 
 def test_3d_model_needs_a_section(tmp_path: Path) -> None:
