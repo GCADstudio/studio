@@ -251,6 +251,8 @@ def read_mesh(path: Path) -> tuple[np.ndarray, np.ndarray]:
         faces = np.asarray([e["nodes_nums"] for e in sets[2412][91]], dtype=int) - 1
         return xyz, faces
     mesh = meshlab_load(path).current_mesh()  # X3D, VRML
+    # MeshLab's Linux X3D importer can leave deleted vertices behind; drop them first.
+    mesh.compact()
     return mesh.vertex_matrix(), mesh.face_matrix()
 
 
