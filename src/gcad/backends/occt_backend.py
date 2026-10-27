@@ -199,6 +199,9 @@ class OcctModel:
         tris = tris[keep]
         return Mesh(vertices, tris, [group], np.zeros(len(tris), np.int64))
 
+    def contours(self) -> list[np.ndarray]:
+        raise GcadError("2D formats are written from the manifold back-end; use --backend auto")
+
     def volume(self) -> float:
         if self.shape is None or self.dim != 3:
             return 0.0
@@ -265,7 +268,10 @@ class _Builder:
         m = node_matrix(node)
         if m is None:
             if node.op not in ATTRIBUTE_OPS and node.op != "union":
-                raise GcadError(f"back-end 'occt' does not support '{node.op}'", node.span)
+                raise GcadError(
+                    f"back-end 'occt' does not support '{node.op}' yet; use --backend manifold",
+                    node.span,
+                )
             return merged
         return _transform(merged, m)
 

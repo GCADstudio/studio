@@ -48,8 +48,8 @@ class ExportReport:
     files: list[Path]
     format_name: str
     backend: str
-    triangles: int | None
-    volume: float
+    summary: str  # what was written: triangles and volume, or outlines and area
+    triangles: int | None = None
 
 
 def export_file(
@@ -76,4 +76,11 @@ def export_file(
         raise GcadError(f"back-end '{backend.name}' produced an invalid model")
     files = export(ExportJob(model, graph, out, dict(options or {})), fmt, backend.capabilities)
     triangles = model.mesh().triangle_count if fmt.needs == "mesh" else None
-    return evaluated, ExportReport(files, fmt.name, backend.name, triangles, model.volume())
+    if fmt.needs == "2d":
+        n = len(model.contours())
+        summary = f"{n} outline{'s' if n != 1 else ''}, area {model.area():.6g} mm^2"
+    elif triangles is not None:
+        summary = f"{triangles} triangles, volume {model.volume():.6g} mm^3"
+    else:
+        summary = f"volume {model.volume():.6g} mm^3"
+    return evaluated, ExportReport(files, fmt.name, backend.name, summary, triangles)

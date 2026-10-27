@@ -4,18 +4,19 @@ A language-agnostic, code-first CAD studio: what Jupyter did for IPython, GCAD S
 
 ## Status
 
-Pre-alpha. Milestones M0 to M3 of [the plan](docs/SPEC.md#12-delivery-plan) are done:
+Pre-alpha. Milestones M0 to M4 of [the plan](docs/SPEC.md#12-delivery-plan) are done:
 
 | Works now | Planned |
 |---|---|
-| GCore language and evaluator with source spans, limits and diagnostics | M4: 2D sections; DXF, SVG, PDF, EPS, CGM |
-| Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python | M5: browser studio (editor, 3D viewer, console) |
-| Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) | M6: release |
+| GCore language and evaluator with source spans, limits and diagnostics | M5: browser studio (editor, 3D viewer, console) |
+| Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python | M6: release |
+| Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) | |
 | Exact B-rep back-end on [OpenCASCADE](https://dev.opencascade.org); mesh back-end on [Manifold](https://github.com/elalish/manifold); both CPU only | |
-| Export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV | |
+| 3D export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV | |
+| 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM | |
 | `gcad` command line, headless | |
 
-Run `gcad formats` to see every format and its milestone.
+Run `gcad formats` to see every format and which back-ends are available.
 
 ## Install
 
@@ -100,7 +101,14 @@ Documents are in millimetres, and each format is written by its own convention:
 | glTF, VRML | metres and +Y up by definition: vertex data stays in mm, one root transform scales by 0.001 and turns the model |
 | STL, OBJ | no unit field: millimetres (OBJ says so in a comment) |
 
-Exports are reproducible: the same source gives byte-identical files. STEP, IGES and COLLADA contain a date; set `SOURCE_DATE_EPOCH` or `--epoch` to fix it. STEP and IGES headers never contain your user name or organisation.
+**2D.** A 2D model (`square`, `circle`, `polygon` and their booleans) exports directly; a 3D model needs a cut first: `projection(cut = true)` in minscad, `(section ...)` or `(project ...)` in GCore. DXF, SVG, PDF, EPS and CGM are written at 1:1 in millimetres, as closed outlines drawn with a 0.1 mm hairline (what laser cutters and plotters expect), on a page of the drawing's extents plus a 1 mm margin:
+
+```bash
+gcad export src/gcad/kernels/minscad/examples/plate2d.mscad -o plate.dxf   # also .svg .pdf .eps .cgm
+gcad export src/gcad/kernels/minscad/examples/section.mscad -o section.svg
+```
+
+Exports are reproducible: the same source gives byte-identical files. STEP, IGES, COLLADA, DXF, PDF and EPS contain a date; set `SOURCE_DATE_EPOCH` or `--epoch` to fix it. STEP and IGES headers never contain your user name or organisation.
 
 ## Development
 

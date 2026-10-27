@@ -84,19 +84,20 @@ def cmd_export(args: argparse.Namespace) -> int:
         out = Path(src.stem + FORMATS[args.format.lower()].extensions[0])
     else:
         raise GcadError("give an output file with -o, or a format with -f")
-    options: dict[str, object] = {"ascii": args.ascii, "schema": args.schema, "epoch": args.epoch}
+    options: dict[str, object] = {
+        "ascii": args.ascii,
+        "schema": args.schema,
+        "epoch": args.epoch,
+        "dxf_version": args.dxf_version,
+    }
     evaluated, report = export_file(
         src, out, args.format, args.kernel, args.backend, args.tol, options
     )
     failed = print_diagnostics(evaluated.result.diagnostics)
     if failed or report is None:
         return 1
-    detail = f"{report.triangles} triangles, " if report.triangles is not None else ""
     names = ", ".join(str(p) for p in report.files)
-    print(
-        f"wrote {names} ({report.format_name}; back-end {report.backend}; "
-        f"{detail}volume {report.volume:.6g} mm^3)"
-    )
+    print(f"wrote {names} ({report.format_name}; back-end {report.backend}; {report.summary})")
     return 0
 
 
@@ -176,6 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tol", type=float, help="linear tessellation tolerance in mm")
     p.add_argument("--ascii", action="store_true", help="ASCII instead of binary STL")
     p.add_argument("--schema", help="STEP application protocol: AP214 (default) or AP242")
+    p.add_argument("--dxf-version", help="DXF version: R2000 (default), R12, ... R2018")
     p.add_argument(
         "--epoch",
         type=int,

@@ -90,17 +90,34 @@ def test_minscad_examples_match_openscad(path: Path, tmp_path: Path) -> None:
 
     $fn is fixed so that both use the same circle tessellation."""
     text = "$fn = 64;\n" + path.read_text(encoding="utf-8")
-    src, stl = tmp_path / f"{path.stem}.scad", tmp_path / f"{path.stem}.stl"
-    src.write_text(text)
-    assert OPENSCAD is not None
-    subprocess.run(
-        [OPENSCAD, "-o", str(stl), str(src)], check=True, capture_output=True, timeout=300
-    )
-    reference = trimesh.load(stl, force="mesh")
     evaluated = evaluate_source(text, path.name, discover()[0]["minscad"])
     assert evaluated.result.ok and evaluated.result.graph is not None
     model = get_backend("manifold").realize(evaluated.result.graph)
     box = model.bounds()
     assert box is not None
+    two_d = evaluated.result.graph.root.dim == 2
+    src = tmp_path / f"{path.stem}.scad"
+    out = tmp_path / f"{path.stem}.{'dxf' if two_d else 'stl'}"
+    src.write_text(text)
+    assert OPENSCAD is not None
+    subprocess.run(
+        [OPENSCAD, "-o", str(out), str(src)], check=True, capture_output=True, timeout=300
+    )
+    if two_d:
+        # OpenSCAD writes oriented LINE segments; Green's theorem gives the net area.
+        ezdxf = pytest.importorskip("ezdxf")
+        lines = ezdxf.readfile(out).modelspace().query("LINE")
+        seg = np.array(
+            [[e.dxf.start.x, e.dxf.start.y, e.dxf.end.x, e.dxf.end.y] for e in lines], dtype=float
+        )
+        area = 0.5 * float(np.sum(seg[:, 0] * seg[:, 3] - seg[:, 2] * seg[:, 1]))
+        pts = seg.reshape(-1, 2)
+        assert np.allclose(box[0][:2], pts.min(axis=0), atol=1e-6)
+        assert np.allclose(box[1][:2], pts.max(axis=0), atol=1e-6)
+        assert len(seg) == sum(len(c) for c in model.contours())
+        # OpenSCAD writes DXF coordinates to 6 significant digits (e.g. 16.1162).
+        assert model.area() == pytest.approx(area, rel=1e-6)
+        return
+    reference = trimesh.load(out, force="mesh")
     assert np.allclose(np.concatenate(box), reference.bounds.ravel(), atol=1e-4)
     assert model.volume() == pytest.approx(reference.volume, rel=1e-5)

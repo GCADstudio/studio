@@ -46,6 +46,14 @@ class ManifoldModel:
             tri_group[run_index[r] // 3 : run_index[r + 1] // 3] = groups.index(group)
         return Mesh(vertices, triangles, groups, tri_group)
 
+    def contours(self) -> list[np.ndarray]:
+        """Closed 2D outlines in mm: outer boundaries counter-clockwise, holes clockwise."""
+        if self.dim != 2:
+            raise GcadError("a 3D model has no 2D outline; wrap it in section or project")
+        # Slicing leaves collinear points on straight edges; drop only those (1 nm).
+        clean = self.shape.simplify(1e-6)
+        return [np.asarray(c, dtype=np.float64) for c in clean.to_polygons() if len(c) >= 3]
+
     def volume(self) -> float:
         return float(self.shape.volume()) if self.dim == 3 else 0.0
 
@@ -103,6 +111,10 @@ class _Realizer:
             rgba = tuple(node.vec("rgba"))
             color = (rgba[0], rgba[1], rgba[2], rgba[3])
         parts = [self.build(c, color) for c in node.children]
+        if op == "section":
+            return self.union(parts, 3).slice(node.num("z"))
+        if op == "project":
+            return self.union(parts, 3).project()
         if op in ("linear_extrude", "rotate_extrude"):
             section = self.union(parts, 2)
             return self.tag(self.extrude(node, section), node, color)
@@ -181,7 +193,7 @@ class _Realizer:
 
 class ManifoldBackend:
     name = "manifold"
-    capabilities = frozenset({"mesh"})
+    capabilities = frozenset({"mesh", "2d"})
 
     def realize(self, graph: Graph, tolerance: float | None = None) -> ManifoldModel:
         tol = tolerance if tolerance is not None else default_tolerance(graph)

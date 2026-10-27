@@ -15,6 +15,8 @@ class RealizedModel(Protocol):
 
     def mesh(self) -> Mesh: ...
 
+    def contours(self) -> list[np.ndarray]: ...
+
     def volume(self) -> float: ...
 
     def area(self) -> float: ...
@@ -26,7 +28,8 @@ class RealizedModel(Protocol):
 
 class Backend(Protocol):
     name: str
-    #: "mesh" for tessellated output, "brep" for exact geometry (STEP, IGES).
+    #: "mesh" for tessellated output, "brep" for exact geometry (STEP, IGES), "2d" for
+    #: closed outlines of 2D models and sections (DXF, SVG, PDF, EPS, CGM).
     capabilities: frozenset[str]
 
     def realize(self, graph: Graph, tolerance: float | None = None) -> RealizedModel: ...

@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M3 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M4 are implemented; see the README for what works today. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -134,7 +134,7 @@ The evaluator emits a JSON directed acyclic graph; identical sub-trees share one
 | Transforms | `translate`, `rotate` (Euler x→y→z in degrees, OpenSCAD order), `scale`, `mirror`, `matrix` (4×4) |
 | Booleans | `union`, `difference`, `intersection` (n-ary, 2D and 3D) |
 | 2D→3D | `linear_extrude(height, center)`, `rotate_extrude(angle)`; `twist`/`scale` on extrude is S |
-| 3D→2D | `section(plane)` M; `projection(view, hidden_lines)` S |
+| 3D→2D | `section(plane)` M; `projection(view, hidden_lines)` S. As built in M4: `section(z)` cuts at height z (other planes: rotate the model first); `project` gives the outline seen from +z (no hidden lines); minscad's `projection(cut)` maps onto both, as in OpenSCAD. Both run on back-end M; back-end B reports them as not supported yet. |
 | Attributes | `color(rgba)`, `name`; `material` S |
 | Document | `units` (default mm; also cm, m, in), metadata (title, author, revision) |
 
@@ -196,11 +196,11 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 | COLLADA | COLLADA 1.4.1 (ISO/PAS 17506) | `.dae` | mesh | Own writer; mm and Z_UP declared in `<asset>` | M | Validate against the COLLADA 1.4.1 schema; re-read with `pycollada`. As built: schema-valid (checked locally); pycollada and MeshLab in CI |
 | UNV | I-DEAS Universal: datasets 164 (units), 2411 (nodes), 2412 (elements) | `.unv` | mesh | Own writer; surface triangles (FE type 91); units code 5 (mm) | M | Re-read with Gmsh where available; node and element counts. As built: pyuff (pure Python, every platform) and Gmsh; volume from the re-read mesh |
 | glTF | glTF 2.0 binary | `.glb` | mesh | Own writer (also the viewer feed) | M | glTF validator; re-read with `trimesh` |
-| DXF | AutoCAD DXF, R2000 (AC1015) default, R12 option | `.dxf` | 2D | `ezdxf` | M | `ezdxf` audit with zero errors; every vertex read back equals the source in mm |
-| SVG | SVG 1.1 Second Edition | `.svg` | 2D | Own writer, 1 user unit = 1 mm, `width/height` in mm | M | XML well-formed; rendered and inspected; dimensions in mm |
-| PDF (2D) | ISO 32000-1 (PDF 1.7), vector, 1:1 scale | `.pdf` | 2D | Own minimal writer (paths only) | M | `pypdf` re-read; `qpdf --check` where available; page size equals drawing extents |
-| EPS | Adobe EPSF 3.0, PostScript Level 2 | `.eps` | 2D | Own writer | M | Ghostscript render where available; BoundingBox in points matches mm extents |
-| CGM | ISO/IEC 8632 Version 1, binary encoding | `.cgm` | 2D | Own writer | S | LibreOffice Draw import where available; element count |
+| DXF | AutoCAD DXF, R2000 (AC1015) default, R12 option | `.dxf` | 2D | `ezdxf`; closed LWPOLYLINE (POLYLINE in R12) per outline, `$INSUNITS` mm | M | `ezdxf` audit with zero errors; every vertex read back equals the source in mm. As built: also imported by Inkscape (rendered and inspected locally) and LibreOffice (CI) |
+| SVG | SVG 1.1 Second Edition | `.svg` | 2D | Own writer, 1 user unit = 1 mm, `width/height` in mm | M | XML well-formed; rendered and inspected; dimensions in mm. As built: svgelements re-read (raw path data within 1e-6 mm; through the viewport within 1e-4 mm, its 96 dpi conversion); Inkscape render |
+| PDF (2D) | ISO 32000-1 (PDF 1.7), vector, 1:1 scale | `.pdf` | 2D | Own minimal writer (paths only) | M | As built: pdfminer.six re-read within 1e-6 mm; Ghostscript render. Page = drawing extents plus a 1 mm margin, so the 0.1 mm hairline is not clipped |
+| EPS | Adobe EPSF 3.0, PostScript Level 2 | `.eps` | 2D | Own writer | M | Ghostscript render where available; BoundingBox in points matches mm extents. As built: Ghostscript interprets the file and pdfminer reads its output (within 2e-3 mm, Ghostscript's PDF precision) |
+| CGM | ISO/IEC 8632 Version 1, binary encoding | `.cgm` | 2D | Own writer; real VDCs in 16.16 fixed point (1/65536 mm), metric scaling 1 mm per unit, POLYGON with hollow interior | S | LibreOffice Draw import where available; element count. As built: a structural parse of the elements in every test run; LibreOffice in one CI job |
 | Tetra UNV | UNV dataset 2412, FE type 111 | `.unv` | B-rep → volume mesh | Gmsh (GPLv2+, optional dependency) | S | Gmsh re-read; element quality report |
 | PLY, OFF, 3MF | de facto / 3MF Core 1.3 | | mesh | Own writers or `trimesh` | C | `trimesh` re-read |
 | DWG | Autodesk DWG | `.dwg` | 2D | Optional plug-in calling a user-installed converter on our DXF | C | Converter round-trip to DXF, vertex comparison |
@@ -242,7 +242,7 @@ JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {
 1. **AC-1 Same model, two languages:** `examples/bracket.mscad` (minscad) and `examples/bracket.gcsg` (csg) give the same canonical graph hash (FR-G1).
 2. **AC-2 Exact export:** a test part (box 40×30×10 mm minus a through-hole Ø8 mm) exported to STEP and IGES re-reads as one valid solid with volume 12,000 − 160π mm³ within 1e-6 relative.
 3. **AC-3 Mesh export:** the same part in STL, OBJ, X3D, VRML, COLLADA, UNV and glTF re-reads with the expected triangle count, is watertight, and has volume within 0.5 % of AC-2.
-4. **AC-4 2D export:** a 2D plate (rectangle with holes) and a section of the test part exported to DXF, SVG, PDF and EPS read back with every vertex within 1e-6 mm of the source and at 1:1 scale.
+4. **AC-4 2D export:** a 2D plate (rectangle with holes) and a section of the test part exported to DXF, SVG, PDF and EPS read back with every vertex within 1e-6 mm of the source and at 1:1 scale. (As built: met for DXF, SVG and PDF; EPS is checked through Ghostscript, whose PDF output limits the round trip to 2e-3 mm.)
 5. **AC-5 New language without code:** a third kernel written only as `kernel.toml`, `grammar.lark` and `rewrite.toml` (for example a YAML-like declarative parts list) passes `gcad kernel check` and renders in the UI with highlighting.
 6. **AC-6 Portability:** the CI matrix of NFR-9 is green; on `windows-11-arm` the B-rep formats are reported as unavailable rather than failing.
 7. **AC-7 Determinism:** exporting twice with `SOURCE_DATE_EPOCH` set gives byte-identical files for every format.

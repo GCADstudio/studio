@@ -25,6 +25,7 @@ dependencies = [
     # Exact B-rep back-end (STEP, IGES). There is no build for Windows on ARM; there the
     # studio runs on the Manifold mesh back-end alone (SPEC NFR-1).
     "cadquery-ocp>=8.0.1; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "ezdxf>=1.1",
     "lark>=1.2",
     "manifold3d>=3.2",
     "numpy>=1.26",
@@ -40,6 +41,8 @@ dev = [
     "pycollada>=0.8",
     "pyuff>=2.4",
     "steputils>=0.1",
+    "svgelements>=1.9",
+    "pdfminer.six>=20231228",
     "pymeshlab>=2023.12; sys_platform != 'win32' or platform_machine != 'ARM64'",
     "gmsh>=4.11; (sys_platform != 'linux' or platform_machine == 'x86_64') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
 ]

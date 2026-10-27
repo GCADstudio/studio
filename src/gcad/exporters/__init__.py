@@ -90,14 +90,16 @@ def _formats() -> dict[str, ExportFormat]:
         ExportFormat("vrml", "VRML97", (".wrl",), "mesh", _lazy(m + "vrml")),
         ExportFormat("dae", "COLLADA 1.4.1", (".dae",), "mesh", _lazy(m + "collada")),
         ExportFormat("unv", "I-DEAS Universal surface mesh", (".unv",), "mesh", _lazy(m + "unv")),
+        ExportFormat(
+            "dxf", "DXF (R2000, or R12 with --dxf-version)", (".dxf",), "2d", _lazy(m + "dxf")
+        ),
+        ExportFormat("svg", "SVG 1.1", (".svg",), "2d", _lazy(m + "svg")),
+        ExportFormat("pdf", "PDF 1.7 vector", (".pdf",), "2d", _lazy(m + "pdf")),
+        ExportFormat("eps", "EPS 3.0 (PostScript Level 2)", (".eps",), "2d", _lazy(m + "eps")),
+        ExportFormat("cgm", "CGM version 1, binary", (".cgm",), "2d", _lazy(m + "cgm")),
     ]
-    planned = [
-        ("dxf", "DXF R2000", (".dxf",), "2d", "M4"),
-        ("svg", "SVG 1.1", (".svg",), "2d", "M4"),
-        ("pdf", "PDF 1.7 vector", (".pdf",), "2d", "M4"),
-        ("eps", "EPS 3.0", (".eps",), "2d", "M4"),
-        ("cgm", "CGM binary", (".cgm",), "2d", "M4"),
-    ]
+    # Formats that are specified but not built yet: (id, name, extensions, needs, milestone).
+    planned: list[tuple[str, str, tuple[str, ...], str, str]] = []
     out = {f.id: f for f in built}
     for fid, name, ext, needs, milestone in planned:
         out[fid] = ExportFormat(fid, name, ext, needs, None, milestone)
@@ -128,6 +130,10 @@ def export(job: ExportJob, fmt: ExportFormat, backend_capabilities: frozenset[st
     if fmt.needs in ("mesh", "brep") and job.model.dim != 3:
         raise GcadError(f"{fmt.name} needs a 3D model; this model is 2D")
     if fmt.needs == "2d" and job.model.dim != 2:
-        raise GcadError(f"{fmt.name} needs a 2D model or a section")
+        raise GcadError(
+            f"{fmt.name} needs a 2D model; wrap a 3D model in (section ...) or (project ...)"
+        )
+    if fmt.needs == "2d" and "2d" not in backend_capabilities:
+        raise GcadError(f"{fmt.name} is written from the manifold back-end; use --backend auto")
     job.path.parent.mkdir(parents=True, exist_ok=True)
     return fmt.writer(job)

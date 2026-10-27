@@ -403,6 +403,23 @@ def g_linear_extrude(args: list[object], kwargs: dict[str, object], ctx: CallCtx
     return ctx.ev.node("linear_extrude", out, children, ctx.span, 3)
 
 
+def _to_2d(op: str, params: list[tuple[str, object]]) -> BuiltinFn:
+    """3D -> 2D: `section` cuts at a height, `project` takes the outline seen from +z."""
+
+    def fn(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
+        v, children = bind(op, params, args, kwargs, ctx)
+        if not children:
+            return empty(2, ctx.span)
+        if same_dim(children, op, ctx.span) != 3:
+            raise GcadError(f"'{op}' needs 3D shapes", ctx.span)
+        out: dict[str, ArgValue] = {}
+        if "z" in v:
+            out["z"] = as_num(v["z"], "z", ctx.span)
+        return ctx.ev.node(op, out, children, ctx.span, 2)
+
+    return fn
+
+
 def g_rotate_extrude(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
     params: list[tuple[str, object]] = [("angle", 360.0), ("convexity", None)]
     v, children = bind("rotate_extrude", params, args, kwargs, ctx, hints=True)
@@ -742,6 +759,8 @@ def global_env() -> Env:
         "intersection": _boolean("intersection"),
         "linear_extrude": g_linear_extrude,
         "rotate_extrude": g_rotate_extrude,
+        "section": _to_2d("section", [("z", 0.0)]),
+        "project": _to_2d("project", []),
         "color": g_color,
         "name": g_name,
         # arithmetic and logic

@@ -293,6 +293,14 @@ def estimate_bounds(node: Node, memo: dict[str, Box | None] | None = None) -> Bo
         else:
             r = float(max(abs(child[0][0]), abs(child[1][0])))
             result = (np.array([-r, -r, child[0][1]]), np.array([r, r, child[1][1]]))
+    elif op in ("section", "project"):
+        child = _box_union([estimate_bounds(c, memo) for c in node.children])
+        if child is None:
+            result = None
+        else:
+            lo, hi = child[0].copy(), child[1].copy()
+            lo[2] = hi[2] = 0.0
+            result = (lo, hi)
     else:
         result = _box_union([estimate_bounds(c, memo) for c in node.children])
         m = node_matrix(node)

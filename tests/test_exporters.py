@@ -96,11 +96,6 @@ def test_brep_formats_are_refused_by_the_mesh_backend(test_part: Path, tmp_path:
         export_file(test_part, tmp_path / "part.step", backend_name="manifold")
 
 
-def test_2d_formats_are_reported_as_planned(test_part: Path, tmp_path: Path) -> None:
-    with pytest.raises(Exception, match="milestone M4"):
-        export_file(test_part, tmp_path / "part.dxf")
-
-
 def test_exports_are_byte_identical_across_processes(
     examples: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
