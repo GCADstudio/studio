@@ -105,7 +105,9 @@
    [0 0 0 1]])
 (define (transpose m) (for ((j (range 0 (- (len (first m)) 1)))) (for ((row m)) (get row j))))
 (define (mat-mul a b) (let ((bt (transpose b))) (for ((row a)) (for ((c bt)) (* row c)))))
-(define (mat-vec m v) (let ((h (* m [(get v 0) (get v 1) (get v 2) 1]))) [(get h 0) (get h 1) (get h 2)]))
+; (GCore's * of a list of rows and a vector is not a matrix product, so rows go one by one.)
+(define (rows-times m v) (for ((row m)) (* row v)))
+(define (mat-vec m v) (let ((h (rows-times m [(get v 0) (get v 1) (get v 2) 1]))) [(get h 0) (get h 1) (get h 2)]))
 (define (translation v) (frame [1 0 0] [0 1 0] [0 0 1] v))
 
 ; Part 42's default x direction when a placement gives none.
@@ -161,6 +163,9 @@
   (if (and (is_list a) (is_list b))
     (and (== (len a) (len b)) (not (any (range 0 (- (len a) 1)) (fn (i) (not (near (get a i) (get b i)))))))
     (and (is_num a) (is_num b) (<= (abs (- a b)) (* TOL (max 1 (abs a) (abs b)))))))
+; A hinted primitive is built from its hint, then moved by whatever placement the file has
+; beyond the one the writer gives that primitive (own): an outer transform folded in, an edit.
+(define (place-rel m own shape) (place (mat-mul m (translation (* -1 own))) shape))
 ; tessellation hints the writer kept: :$fn, :$fa, :$fs as the node had them
 (define (fn-hint h) (harg h "fn" 0))
 (define (fa-hint h) (harg h "fa" 0))
@@ -190,25 +195,23 @@
   (let ((m (placement (attr r 1) ctx))
         (size [(length r 2 "x" ctx) (length r 3 "y" ctx) (length r 4 "z" ctx)])
         (h (hint-of r "box")))
-    (if (and (is_list h) (near size (harg h "size"))
-             (near m (if (harg h "center") (translation (* -0.5 (harg h "size"))) IDENTITY)))
-      (box (harg h "size") :center (harg h "center"))
+    (if (and (is_list h) (near size (harg h "size")))
+      (place-rel m (if (harg h "center") (* -0.5 (harg h "size")) [0 0 0])
+                 (box (harg h "size") :center (harg h "center")))
       (place m (box size)))))
 
 (define (solid/SPHERE r ctx)
   (let ((rad (length r 1 "radius" ctx))
         (c (if (is_undef (attr r 2)) [0 0 0] (point (attr r 2) ctx)))
         (h (hint-of r "sphere")))
-    (if (and (is_list h) (near rad (harg h "r")) (== c [0 0 0]))
-      (sphere (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
-      (place (translation c) (sphere rad)))))
+    (place (translation c)
+      (if (and (is_list h) (near rad (harg h "r")))
+        (sphere (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+        (sphere rad)))))
 
-(define (cylinder-hinted h m height r1 r2)
-  ; the placement and radii GCAD's writer gives cylinder(h, r1, r2, center)
-  (let ((z0 (if (harg h "center") (* -0.5 (harg h "h")) 0)))
-    (and (near height (harg h "h"))
-         (near [r1 r2] [(harg h "r1") (harg h "r2")])
-         (near m (translation [0 0 z0])))))
+(define (cylinder-hinted h height r1 r2)
+  (and (near height (harg h "h")) (near [r1 r2] [(harg h "r1") (harg h "r2")])))
+(define (cylinder-own h) [0 0 (if (harg h "center") (* -0.5 (harg h "h")) 0)])
 (define (cylinder-from h)
   (cylinder :h (harg h "h") :r1 (harg h "r1") :r2 (harg h "r2") :center (harg h "center")
             :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h)))
@@ -218,8 +221,8 @@
         (height (length r 2 "height" ctx))
         (rad (length r 3 "radius" ctx))
         (h (hint-of r "cylinder")))
-    (if (and (is_list h) (cylinder-hinted h m height rad rad))
-      (cylinder-from h)
+    (if (and (is_list h) (cylinder-hinted h height rad rad))
+      (place-rel m (cylinder-own h) (cylinder-from h))
       (place m (cylinder :h height :r rad)))))
 
 ; Part 42 6.4.15: position.location is the centre of the small (top) face, the axis points out
@@ -232,11 +235,11 @@
         (base (+ top (* height (tan semi))))
         (frame-m (mat-mul m (translation [0 0 (- height)])))
         (h (hint-of r "cylinder")))
-    (if (and (is_list h)
-             (or (cylinder-hinted h frame-m height base top)
-                 (cylinder-hinted h (mat-mul m (mirror-z)) height top base)))
-      (cylinder-from h)
-      (place frame-m (cylinder :h height :r1 base :r2 top)))))
+    (if (and (is_list h) (cylinder-hinted h height base top))
+      (place-rel frame-m (cylinder-own h) (cylinder-from h))
+      (if (and (is_list h) (cylinder-hinted h height top base))
+        (place-rel (mat-mul m (mirror-z)) (cylinder-own h) (cylinder-from h))
+        (place frame-m (cylinder :h height :r1 base :r2 top))))))
 (define (mirror-z) [[1 0 0 0] [0 -1 0 0] [0 0 -1 0] [0 0 0 1]])
 
 ; A torus is a circle revolved about the axis: exact on back-end B.
@@ -276,11 +279,11 @@
 ; GCAD's union, difference and intersection take any number of operands; Part 42's are binary.
 ; The writer chains them to the left and names the outermost ["union" [["n" 3]]] and the inner
 ; ones ["union" [["n" 0]]]; the reader puts the chain back together when it is intact.
-(define (chain-ok r op n)
+(define (chain-ok r op tag n)
   (if (<= n 2) true
-    (let ((inner (attr r 2)) (h (hint-of inner op)))
-      (and (is inner "BOOLEAN_RESULT") (is_list h) (== (harg h "n") 0)
-           (== (boolean-op (attr inner 1)) op) (chain-ok inner op (- n 1))))))
+    (let ((inner (attr r 2)) (h (hint-of inner tag)))
+      (and (is-any inner ["BOOLEAN_RESULT" "BOOLEAN_RESULT_2D"]) (is_list h) (== (harg h "n") 0)
+           (== (boolean-op (attr inner 1)) op) (chain-ok inner op tag (- n 1))))))
 (define (flatten-chain r n)
   (if (<= n 2) [(attr r 2) (attr r 3)]
     (concat (flatten-chain (attr r 2) (- n 1)) [(attr r 3)])))
@@ -289,14 +292,22 @@
         (h (if (is_undef op) undef (hint-of r op)))
         (n (if (is_list h) (harg h "n" 0) 0)))
     (if (is_undef op) (fail (where r) ": operator must be .UNION., .DIFFERENCE. or .INTERSECTION.")
-      (if (and (> n 2) (chain-ok r op n))
+      (if (and (> n 2) (chain-ok r op op n))
         (apply (resolve op) (for ((o (flatten-chain r n))) (operand o ctx)))
-        ((resolve op) (operand (attr r 2) ctx) (operand (attr r 3) ctx))))))
+        (let ((c (hint-of r "children")) (k (if (is_list c) (harg c "n" 0) 0)))
+          ; the shapes of a transform that applies to several: a list, not a union
+          (if (and (== op "union") (>= k 2) (chain-ok r op "children" k))
+            (for ((o (flatten-chain r k))) (operand o ctx))
+            ((resolve op) (operand (attr r 2) ctx) (operand (attr r 3) ctx))))))))
 
 ; An operand may be a solid, a CSG primitive, a boolean result or a half-space.
 (define (operand o ctx) (solid o ctx))
 
 (define (solid/CSG_SOLID r ctx) (operand (attr r 1) ctx))
+; AP242 carries 2D CSG in the later form of Part 42: CSG_SOLID_2D of BOOLEAN_RESULT_2D.
+(define (solid/CSG_SOLID_2D r ctx) (operand (attr r 1) ctx))
+(define (solid/CSG_PRIMITIVE_SOLID_2D r ctx) (operand (attr r 1) ctx))
+(define (solid/BOOLEAN_RESULT_2D r ctx) (solid/BOOLEAN_RESULT r ctx))
 
 ; A half-space is the side of a surface its agreement flag names; GCAD's graph has no unbounded
 ; solids, so it becomes a block on that side of the plane: the box domain when there is one, else
@@ -394,9 +405,9 @@
 
 (define (inverse-rigid m)
   ; the inverse of a rotation + translation frame
-  (let ((rt (transpose [(column m 0) (column m 1) (column m 2)]))
+  (let ((rt [(column m 0) (column m 1) (column m 2)])   ; the rotation's transpose
         (t (column m 3))
-        (o (* -1 [(* (get rt 0) t) (* (get rt 1) t) (* (get rt 2) t)])))
+        (o (* -1 (rows-times rt t))))
     [[(get (get rt 0) 0) (get (get rt 0) 1) (get (get rt 0) 2) (get o 0)]
      [(get (get rt 1) 0) (get (get rt 1) 1) (get (get rt 1) 2) (get o 1)]
      [(get (get rt 2) 0) (get (get rt 2) 1) (get (get rt 2) 2) (get o 2)]
@@ -406,16 +417,66 @@
 (define (boundary b m ctx)
   (at b
     (let ((segs (attr b 1)))
+      (if (any segs (fn (s) (is-any (attr s 2) PCURVES)))
+        (pcurve-loop b segs ctx)
       (if (and (== (len segs) 1) (is (attr (first segs) 2) "CIRCLE"))
         (circle-2d (attr (first segs) 2) m ctx)
-        (polygon (apply concat (for ((s segs)) (segment-points s m ctx))))))))
+        (let ((pts (apply concat (for ((s segs)) (segment-points s m ctx)))))
+          (if (== (len segs) 1) (polyline-2d (attr (first segs) 2) pts) (polygon pts))))))))
+
+; Boundaries as Part 42 requires them: curves on the plane (pcurves), whose 2D curves are in the
+; plane's own (u, v), so the profile needs no transform. Trimmed lines give a polygon; trimmed
+; arcs of one circle that close the loop give that circle; any other arc is refused (FR-B4).
+(define PCURVES ["PCURVE" "BOUNDED_PCURVE"])
+(define (curve-2d s)
+  (let ((pc (attr s 2)))
+    (if (is-any pc PCURVES)
+      (first (field-rep (field pc 2 "PCURVE" 1)))
+      (fail (where pc) ": a boundary mixes pcurves and other curves"))))
+(define (field-rep rep) (field rep 1 "REPRESENTATION" 1))
+(define (trim-point t ctx)
+  (let ((pts (filter t (fn (x) (is x "CARTESIAN_POINT")))))
+    (if (> (len pts) 0) (let ((p (point (first pts) ctx))) [(get p 0) (get p 1)])
+      (fail "a trimmed curve needs its end points (CARTESIAN trimming)"))))
+(define (pcurve-loop b segs ctx)
+  (let ((curves (for ((s segs)) (curve-2d s)))
+        (circles (filter curves (fn (c) (and (is c "TRIMMED_CURVE") (is (attr c 1) "CIRCLE")))))
+        (h (hint-of b "circle")))
+    (if (== (len circles) (len curves))
+      (let ((c0 (attr (first circles) 1))
+            (centre (column (placement (attr c0 1) ctx) 3))
+            (rad (length c0 2 "radius" ctx)))
+        (if (any circles (fn (c) (not (near [(column (placement (attr (attr c 1) 1) ctx) 3) (length (attr c 1) 2 "radius" ctx)] [centre rad]))))
+          (fail (where b) ": arcs of different circles: GCAD's 2D shapes have no arcs (FR-B4)")
+          (place (translation centre)
+            (if (and (is_list h) (near rad (harg h "r")))
+              (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+              (circle rad)))))
+      (let ((pts (for ((i (range 0 (- (len curves) 1))))
+                   (let ((c (get curves i)) (s (get segs i)))
+                     (if (and (is c "TRIMMED_CURVE") (is (attr c 1) "LINE"))
+                       (trim-point (if (== (attr s 1) (attr c 4)) (attr c 2) (attr c 3)) ctx)
+                       (fail (where c) ": a profile may hold lines and whole circles; "
+                             "GCAD's 2D shapes have no arcs or splines (FR-B4)"))))))
+        (polyline-2d b pts)))))
 (define (circle-2d c m ctx)
   (let ((h (hint-of c "circle"))
         (centre (local m (column (placement (attr c 1) ctx) 3)))
         (rad (length c 2 "radius" ctx)))
-    (if (and (is_list h) (near rad (harg h "r")) (== centre [0 0]))
-      (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
-      (place (translation [(get centre 0) (get centre 1) 0]) (circle rad)))))
+    (place (translation [(get centre 0) (get centre 1) 0])
+      (if (and (is_list h) (near rad (harg h "r")))
+        (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+        (circle rad)))))
+; a closed polyline the writer made from a square or a polygon
+(define (polyline-2d c pts)
+  (let ((r (hint-of c "rect")) (p (hint-of c "polygon")))
+    (if (and (is_list r)
+             (let ((s (harg r "size")) (o (if (harg r "center") (* -0.5 s) [0 0])))
+               (near pts [o [(+ (get o 0) (get s 0)) (get o 1)] (+ o s) [(get o 0) (+ (get o 1) (get s 1))]])))
+      (rect (harg r "size") :center (harg r "center"))
+      (if (and (is_list p) (is_undef (harg p "paths")) (near pts (harg p "points")))
+        (polygon (harg p "points"))
+        (polygon pts)))))
 ; the points of a composite_curve_segment, each but the last of the segment
 (define (segment-points s m ctx)
   (let ((c (attr s 2)) (forward (attr s 1)))
@@ -436,7 +497,7 @@
   (let ((a (area (attr r 1) ctx))
         (m (first a))
         (d (unit (direction (attr r 2))))
-        (local-d (* (transpose [(column m 0) (column m 1) (column m 2)]) d))
+        (local-d (rows-times [(column m 0) (column m 1) (column m 2)] d))
         (depth (length r 3 "depth" ctx))
         (h (hint-of r "linear_extrude")))
     (if (not (near [(get local-d 0) (get local-d 1)] [0 0]))
@@ -458,7 +519,7 @@
         (z (column ax 2))
         (o (column ax 3))
         (pn (column pm 2))
-        (x (unit (cross pn z)))
+        (x (unit (cross z pn)))
         (rev (frame x z (cross x z) o))   ; profile coordinates: x = radius, y = along the axis
         (a (area surface ctx))
         (to-rev (mat-mul (inverse-rigid rev) pm))
@@ -618,16 +679,17 @@
 
 (define (solid/CIRCULAR_AREA r ctx)
   (let ((c (point (attr r 1) ctx)) (rad (length r 2 "radius" ctx)) (h (hint-of r "circle")))
-    (if (and (is_list h) (near rad (harg h "r")) (== c [0 0 0]))
-      (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
-      (place (translation c) (circle rad)))))
+    (place (translation c)
+      (if (and (is_list h) (near rad (harg h "r")))
+        (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+        (circle rad)))))
 (define (solid/RECTANGULAR_AREA r ctx)
   (let ((m (placement (attr r 1) ctx))
         (size [(length r 2 "x" ctx) (length r 3 "y" ctx)])
         (h (hint-of r "rect")))
-    (if (and (is_list h) (near size (harg h "size"))
-             (near m (if (harg h "center") (translation (* -0.5 [(get size 0) (get size 1) 0])) IDENTITY)))
-      (rect (harg h "size") :center (harg h "center"))
+    (if (and (is_list h) (near size (harg h "size")))
+      (place-rel m (if (harg h "center") (* -0.5 [(get size 0) (get size 1) 0]) [0 0 0])
+                 (rect (harg h "size") :center (harg h "center")))
       (place m (rect size)))))
 (define (solid/POLYGONAL_AREA r ctx)
   (let ((pts (for ((p (attr r 1))) (let ((q (point p ctx))) [(get q 0) (get q 1)])))
@@ -734,7 +796,7 @@
 (define REPRESENTATIONS ["SHAPE_REPRESENTATION" "CSG_SHAPE_REPRESENTATION" "CSG_2D_SHAPE_REPRESENTATION"
                          "ADVANCED_BREP_SHAPE_REPRESENTATION" "FACETED_BREP_SHAPE_REPRESENTATION"
                          "MANIFOLD_SURFACE_SHAPE_REPRESENTATION" "PROCEDURAL_SHAPE_REPRESENTATION"])
-(define CSG_ITEMS ["CSG_SOLID" "BOOLEAN_RESULT" "BLOCK" "SPHERE" "RIGHT_CIRCULAR_CYLINDER"
+(define CSG_ITEMS ["CSG_SOLID" "BOOLEAN_RESULT" "CSG_SOLID_2D" "BOOLEAN_RESULT_2D" "CSG_PRIMITIVE_SOLID_2D" "BLOCK" "SPHERE" "RIGHT_CIRCULAR_CYLINDER"
                    "RIGHT_CIRCULAR_CONE" "TORUS" "RIGHT_ANGULAR_WEDGE" "ELLIPSOID" "RECTANGULAR_PYRAMID"
                    "TETRAHEDRON" "SOLID_REPLICA" "EXTRUDED_AREA_SOLID" "REVOLVED_AREA_SOLID"
                    "HALF_SPACE_SOLID" "CIRCULAR_AREA" "RECTANGULAR_AREA" "POLYGONAL_AREA" "ELLIPTIC_AREA"

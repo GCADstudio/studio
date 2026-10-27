@@ -21,8 +21,43 @@ from dataclasses import dataclass
 
 from gcad.diagnostics import Diagnostic, Severity, Span
 from gcad.iso10303 import schemas
-from gcad.iso10303._nxstyle import express, p21
+from gcad.iso10303._nxstyle import express, express_eval, p21
 from gcad.iso10303._nxstyle import iso10303 as nx
+
+# A contradiction in the standards found while making GCAD's writer pass every rule (design note
+# §6, number 16): the AP242 long form's VALID_CSG_2D_PRIMITIVES takes a CSG_SOLID_2D but recurses
+# into a boolean's operands, which boolean_operand_2d makes primitives or BOOLEAN_RESULT_2Ds, never
+# a CSG_SOLID_2D; so csg_solid_2d WR1 fails for every 2D CSG solid whose root is a boolean. The
+# violation is downgraded only when that is all it is: the root is a BOOLEAN_RESULT_2D and every
+# leaf of its tree is one of the primitives the function accepts.
+_CSG_2D_LEAVES = {"CIRCULAR_AREA", "COMPLEX_AREA", "ELLIPTIC_AREA", "HALF_SPACE_2D", "POLYGONAL_AREA",
+                  "PRIMITIVE_2D_WITH_INNER_BOUNDARY", "RECTANGULAR_AREA"}  # fmt: skip
+
+
+def _csg_solid_2d_wr1(ev: object, i: object, expr: str) -> tuple[str, str] | None:
+    f = ev.f  # type: ignore[attr-defined]
+
+    def ok(ref: object, depth: int = 0) -> bool:
+        inst = f.get(ref) if isinstance(ref, p21.Ref) else None
+        if inst is None or depth > 1000:
+            return False
+        if "BOOLEAN_RESULT_2D" in inst.names:
+            params = inst.record("BOOLEAN_RESULT_2D").params
+            return ok(params[2], depth + 1) and ok(params[3], depth + 1)
+        return bool(_CSG_2D_LEAVES & set(inst.names))
+
+    root = f.get(i.pid)  # type: ignore[attr-defined]
+    tree = root.record("CSG_SOLID_2D").params[1] if root and root.record("CSG_SOLID_2D") else None
+    if tree is not None and "BOOLEAN_RESULT_2D" in f.get(tree).names and ok(tree):
+        return "warning", (
+            ": the AP242 long form's VALID_CSG_2D_PRIMITIVES passes a boolean's operands, which "
+            "cannot be CSG_SOLID_2Ds, where it requires one, so no 2D boolean can meet WR1; every "
+            "primitive in this tree is one the function accepts"
+        )
+    return None
+
+
+express_eval.KNOWN[("csg_solid_2d", "wr1")] = _csg_solid_2d_wr1
 
 #: above this many instances the studio checks form only; `gcad iso check` evaluates every rule
 RULES_LIMIT = int(os.environ.get("GCAD_ISO10303_RULES_LIMIT", "5000"))
@@ -124,8 +159,6 @@ def report(source: str, file: str, rules: bool | None = None) -> Report:
         )
         return Report(out, schema=_name(f, have_ap))
     rd = d if d.has_rules else schemas.resources()
-    from gcad.iso10303._nxstyle import express_eval
-
     res = express_eval.rules(f, rd, part=lambda sc: nx.PART.get(sc, (sc or "?").upper()))
     out += [diag(i.level, i.id, i.message) for i in res.issues]
     out += [diag(i.level, i.id, i.message) for i in nx.rules(f, d)]
