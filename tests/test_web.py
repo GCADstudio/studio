@@ -411,7 +411,9 @@ def test_step_files_are_parsed_and_checked_in_the_browser(page: object) -> None:
     assert saved["schemas"] == ["AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF"]
     result = rpc(page, "document/evaluate", **args)
     messages = [d["message"] for d in result["diagnostics"]]
-    assert "rules: 209 evaluated, 1 violated, 0 not evaluated" in messages
+    # how many rules apply depends on the schemas in the cache; all of them are decided
+    counts = [m for m in messages if m.startswith("rules: ")]
+    assert re.fullmatch(r"rules: \d{3} evaluated, 1 violated, 0 not evaluated", counts[-1])
 
 
 def test_uploaded_file_is_kept_in_the_browser(page: object, tmp_path: Path) -> None:
