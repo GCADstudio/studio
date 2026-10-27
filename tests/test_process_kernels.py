@@ -213,7 +213,7 @@ def test_mesh_readers_agree(tmp_path: Path) -> None:
     )
     model = (
         '<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"'
-        ' unit="centimeter"><resources><object id='1' type='model'><mesh><vertices>"
+        ' unit="centimeter"><resources><object id="1" type="model"><mesh><vertices>'
         + "".join(f'<vertex x="{x / 10!r}" y="{y / 10!r}" z="{z / 10!r}"/>' for x, y, z in v)
         + "</vertices><triangles>"
         + "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in f)
