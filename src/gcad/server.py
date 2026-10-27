@@ -20,6 +20,7 @@ import time
 import traceback
 import zipfile
 from collections.abc import Callable
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +30,7 @@ import numpy as np
 
 from gcad import GENERATOR, __version__
 from gcad.backends import available_backends, get_backend, select_backend
+from gcad.core.evaluator import Limits
 from gcad.core.sexpr import to_text
 from gcad.diagnostics import Diagnostic, GcadError
 from gcad.exporters import FORMATS, ExportJob, export
@@ -68,9 +70,17 @@ def _diagnostic(d: Diagnostic, file: str) -> dict[str, object]:
 class Studio:
     """The RPC methods. `root` is the folder files are opened from and saved to."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, limits: Limits | None = None) -> None:
         self.root = root.resolve()
+        self.limits = limits or Limits()
+        # Loading OpenCASCADE takes a while, and far longer while an evaluation holds the GIL;
+        # do it before the first page asks.
+        self.backends = available_backends()
         self.lock = threading.Lock()  # one evaluation at a time
+        # Live mode sends an evaluation per edit. A newer one stops the one running and any
+        # still waiting, so a runaway source costs one time limit, not one per keystroke.
+        self.newest = threading.Event()
+        self.newest_lock = threading.Lock()
 
     # -- helpers ---------------------------------------------------------------------------
 
@@ -100,7 +110,7 @@ class Studio:
             "version": __version__,
             "generator": GENERATOR,
             "root": str(self.root),
-            "backends": available_backends(),
+            "backends": self.backends,
         }
 
     def rpc_kernel_list(self) -> list[dict[str, object]]:
@@ -159,9 +169,17 @@ class Studio:
     ) -> dict[str, object]:
         k = self.kernel(kernel)
         started = time.perf_counter()
+        stop = threading.Event()
+        with self.newest_lock:
+            self.newest.set()
+            self.newest = stop
         with self.lock:
-            evaluated = evaluate_source(source, file, k)
+            if stop.is_set():  # replaced while waiting
+                return {"ok": False, "superseded": True, "diagnostics": [], "ms": 0}
+            evaluated = evaluate_source(source, file, k, replace(self.limits, stop=stop))
             result: dict[str, object] = {"ok": False}
+            if stop.is_set():
+                result["superseded"] = True
             graph = evaluated.result.graph
             diagnostics = list(evaluated.result.diagnostics)
             if gcore:
@@ -242,7 +260,7 @@ class Studio:
             raise RpcError(f"format '{format}' is not available")
         k = self.kernel(kernel)
         with self.lock:
-            evaluated = evaluate_source(source, file, k)
+            evaluated = evaluate_source(source, file, k, self.limits)
             graph = evaluated.result.graph
             if not evaluated.result.ok or graph is None:
                 raise RpcError("the model has errors; fix them before exporting")
@@ -365,9 +383,11 @@ def make_handler(studio: Studio, token: str, host_names: set[str]) -> type[BaseH
 
 
 class StudioServer:
-    def __init__(self, root: Path, port: int = 0, token: str | None = None) -> None:
+    def __init__(
+        self, root: Path, port: int = 0, token: str | None = None, limits: Limits | None = None
+    ) -> None:
         self.token = token or secrets.token_urlsafe(24)
-        self.studio = Studio(root)
+        self.studio = Studio(root, limits)
         self.httpd = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
         self.port = self.httpd.server_address[1]
         hosts = {f"127.0.0.1:{self.port}", f"localhost:{self.port}"}

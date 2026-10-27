@@ -19,9 +19,11 @@ gcad serve part.mscad      # ... and opens a file
 
 It runs on your machine only: the server listens on 127.0.0.1, every call needs the session token in the address it prints, and nothing is loaded from the internet. Geometry is computed in Python; the browser draws it with WebGL, which works with any GPU or with the browser's software renderer.
 
+A model that runs away stops with a message instead of hanging: at 10 s of evaluation, a call depth of 1,000, 10⁶ loop iterations or 10⁵ geometry nodes. In Live mode the next edit stops an evaluation still running, so the studio never queues up behind one.
+
 ## Status
 
-Pre-alpha. Milestones M0 to M5 of [the plan](docs/SPEC.md#12-delivery-plan) are done; M6 (release) is next.
+Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-delivery-plan) are done. What changed is in [CHANGELOG.md](CHANGELOG.md).
 
 | Works now |
 |---|
@@ -39,6 +41,14 @@ Run `gcad formats` to see every format and which back-ends are available.
 ## Install
 
 Python 3.11 or newer on Windows, macOS or Linux, x86_64 or arm64. No compiler or GPU is needed. OpenCASCADE comes as the `cadquery-ocp` wheel, which does not exist for Windows on ARM; there the studio runs without STEP and IGES and says so.
+
+From a release, with the wheel from [GitHub Releases](https://github.com/GCADstudio/studio/releases):
+
+```bash
+pip install gcad_studio-0.1.0-py3-none-any.whl
+```
+
+From a clone, for development:
 
 ```bash
 pip install -e ".[dev]"
@@ -126,7 +136,7 @@ gcad export src/gcad/kernels/minscad/examples/plate2d.mscad -o plate.dxf   # als
 gcad export src/gcad/kernels/minscad/examples/section.mscad -o section.svg
 ```
 
-Exports are reproducible: the same source gives byte-identical files. STEP, IGES, COLLADA, DXF, PDF and EPS contain a date; set `SOURCE_DATE_EPOCH` or `--epoch` to fix it. STEP and IGES headers never contain your user name or organisation.
+Exports are reproducible: the same source gives byte-identical files (the tests export every format in two separate processes and compare the bytes). STEP, IGES, COLLADA, DXF, PDF and EPS contain a date; set `SOURCE_DATE_EPOCH` or `--epoch` to fix it. STEP and IGES headers never contain your user name or organisation.
 
 ## Development
 

@@ -1,0 +1,139 @@
+name: Release
+
+# Builds the sdist and the wheel once, installs that wheel (not the source tree) on every
+# platform of the CI matrix and exports from it, then attaches both to a GitHub Release.
+# Releases on a version tag; on a pull request that touches packaging it only builds and tests.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - pyproject.toml
+      - src/gcad/__init__.py
+      - CHANGELOG.md
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install build
+      - run: python -m build
+      - name: The tag names the version that was built
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(python -c "import sys; sys.path.insert(0, 'src'); import gcad; print(gcad.__version__)")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package $version"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  test-wheel:
+    needs: build
+    name: wheel (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - windows-latest
+          - windows-11-arm
+          - macos-latest
+          - macos-15-intel
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Install the wheel
+        shell: bash
+        run: python -m pip install dist/*.whl
+      - name: Export from the installed package, outside any checkout
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          gcad formats
+          examples=$(python -c "import gcad, pathlib; print(pathlib.Path(gcad.__file__).parent / 'kernels/minscad/examples')")
+          for fmt in stl obj glb x3d wrl dae unv; do
+            gcad export "$examples/flange.mscad" -o "out/flange.$fmt"
+          done
+          for fmt in dxf svg pdf eps cgm; do
+            gcad export "$examples/plate2d.mscad" -o "out/plate.$fmt"
+          done
+          if python -c "import OCP" 2>/dev/null; then
+            gcad export "$examples/flange.mscad" -o out/flange.step
+            gcad export "$examples/flange.mscad" -o out/flange.igs
+          fi
+          ls -l out
+      - name: The studio serves its page from the installed package
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          python - <<'EOF'
+          import http.client
+          from pathlib import Path
+          from gcad.server import StudioServer
+          s = StudioServer(Path.cwd())
+          s.start()
+          conn = http.client.HTTPConnection("127.0.0.1", s.port, timeout=30)
+          for path in ("/", "/vendor/three.module.min.js", "/vendor/codemirror.js"):
+              conn.request("GET", path, headers={"Host": f"127.0.0.1:{s.port}"})
+              response = conn.getresponse()
+              body = response.read()
+              assert response.status == 200 and body, (path, response.status)
+              print(path, len(body))
+          s.stop()
+          EOF
+
+  github-release:
+    needs: test-wheel
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v h="## $version" '$0 == h {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "GCAD Studio $GITHUB_REF_NAME" --notes-file notes.md
+
+  # Off until a PyPI trusted publisher is set up for this repository (pypi.org, project
+  # gcad-studio, workflow release.yml, environment pypi) and the repository variable
+  # PUBLISH_TO_PYPI is set to true.
+  pypi:
+    needs: test-wheel
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
