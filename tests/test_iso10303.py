@@ -354,3 +354,16 @@ def test_freecad_nxstyle_parametric_file() -> None:
     assert {n.op: dict(n.args) for n in evaluate(changed).graph.nodes().values()}["cylinder"][
         "r1"
     ] == 3.0
+
+
+def test_studio_faces_select_their_instances_and_keep_the_file_colour() -> None:
+    """In the studio (FR-U7): every face group of the preview points at the #n instance that
+    made it, and the colour of a STYLED_ITEM reaches the mesh."""
+    from gcad.server import Studio
+
+    text = (EXAMPLES / "csg_primitives.stp").read_text()
+    result = Studio(Path(".")).rpc_document_evaluate("iso10303", text, "csg_primitives.stp")
+    assert result["ok"]
+    picked = [text[s["start"] : s["end"]] for g in result["groups"] for s in g["spans"]]
+    assert picked and all(re.match(r"#\d+=[A-Z_]+\(", p) for p in picked)
+    assert {tuple(g["color"]) for g in result["groups"]} == {(0.2, 0.5, 0.8, 1.0)}

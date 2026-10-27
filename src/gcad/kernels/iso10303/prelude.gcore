@@ -863,7 +863,7 @@
 (define (first-list xs) (first (filter xs is_list)))
 ; the first COLOUR_RGB within a few levels of a presentation style, as [r g b 1]
 (define (find-colour x (depth 0))
-  (if (> depth 8) undef
+  (if (> depth 16) undef
     (if (is_record x)
       (if (is x "COLOUR_RGB")
         (let ((c (part x "COLOUR_RGB"))) [(attr c 1) (attr c 2) (attr c 3) 1])

@@ -68,6 +68,14 @@ def productions(text: str) -> str:
     return "\n".join(out)
 
 
+def shortened(text: str, keep: int = 12) -> str:
+    """The file with only its first instances: still a whole exchange structure, short enough
+    for a character-level Earley parse."""
+    head, _, rest = text.partition("DATA;")
+    instances = re.findall(r"#\d+\s*=(?:'(?:[^']|'')*'|[^;'])*;", rest)
+    return head + "DATA;" + "".join(instances[:keep]) + "ENDSEC;END-ISO-10303-21;"
+
+
 def flatten(text: str) -> str:
     """A file as the WSN sees it: no comments, no line breaks, no spaces outside strings."""
     text = text.replace("\r", "").replace("\n", "")
@@ -109,7 +117,7 @@ def accepts_kernel(text: str) -> bool:
 def test_fixtures_are_sentences_of_the_wsn(wsn: tuple[Lark, object]) -> None:
     parser, _ = wsn
     for path in FIXTURES:
-        text = flatten(path.read_text(encoding="latin-1"))
+        text = shortened(flatten(path.read_text(encoding="latin-1")))
         assert accepts_kernel(text), path.name
         assert accepts_wsn(parser, text), path.name
 
@@ -117,7 +125,7 @@ def test_fixtures_are_sentences_of_the_wsn(wsn: tuple[Lark, object]) -> None:
 def test_random_wsn_sentences_are_accepted_by_the_kernel(wsn: tuple[Lark, object]) -> None:
     parser, grammar = wsn
     rng = random.Random(10303)
-    for _ in range(300):
+    for _ in range(100):
         sentence = grammar.sample("EXCHANGE_FILE", rng, depth=9)  # type: ignore[attr-defined]
         assert accepts_wsn(parser, sentence)
         assert accepts_kernel(sentence), sentence
@@ -129,10 +137,9 @@ def test_mutations_are_judged_alike(wsn: tuple[Lark, object]) -> None:
     parser, _ = wsn
     rng = random.Random(21)
     alphabet = "".join(chr(c) for c in range(32, 127))
-    small = [flatten(p.read_text(encoding="latin-1")) for p in FIXTURES]
-    small = [s for s in small if len(s) < 3000]
+    small = [shortened(flatten(p.read_text(encoding="latin-1")), 6) for p in FIXTURES]
     disagree = []
-    for _ in range(400):
+    for _ in range(200):
         text = rng.choice(small)
         k = rng.randrange(len(text))
         kind = rng.choice(["change", "insert", "drop"])

@@ -101,7 +101,8 @@ def add(path: Path) -> list[tuple[str, int, str | None]]:
         if not str(data.get("format", "")).startswith("nxstyle express dictionary"):
             raise GcadError(f"{path.name} is not a compiled EXPRESS dictionary")
         schemas = {e.get("schema") for e in data.get("entities", {}).values()}
-        name = RESOURCES if not any(s and s.endswith("_mim_lf") for s in schemas) else path.stem
+        long_forms = sorted(s for s in schemas if s and s.endswith("_mim_lf"))
+        name = long_forms[0] if long_forms else RESOURCES
         schema_dir().mkdir(parents=True, exist_ok=True)
         target = schema_dir() / f"{name.upper()}.json"
         shutil.copyfile(path, target)
