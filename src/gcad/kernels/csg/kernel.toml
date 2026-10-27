@@ -1,0 +1,10 @@
+id = "csg"
+name = "CSG S-expressions"
+version = "0.1.0"
+description = "An S-expression modelling language that is GCore itself; a homoiconic language needs no rewrite rules."
+# .gcsg, not .csg: OpenSCAD already uses .csg for its CSG-tree export.
+extensions = [".gcsg"]
+comment = ";"
+# Milestone M1 reads the source with the built-in GCore reader.
+# Milestone M2 re-expresses this kernel as grammar.lark + rewrite.toml.
+parser = "gcore"

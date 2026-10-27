@@ -1,0 +1,28 @@
+; Pipe flange: a revolved profile with a bolt circle, built from functions and 2D shapes.
+
+(define outer-d 120)
+(define bore-d 50)
+(define plate 12)
+(define hub-d 70)
+(define hub-h 30)
+(define bolts 6)
+(define bolt-d 11)
+(define bolt-circle-d 95)
+
+; Half cross-section in the XY plane; rotate_extrude spins it about Z.
+(define profile
+  (polygon [[(/ bore-d 2) 0]
+            [(/ outer-d 2) 0]
+            [(/ outer-d 2) plate]
+            [(/ hub-d 2) plate]
+            [(/ hub-d 2) hub-h]
+            [(/ bore-d 2) hub-h]]))
+
+(define (polar r angle) [(* r (cos angle)) (* r (sin angle)) 0])
+
+(color "silver"
+  (difference
+    (rotate_extrude profile :$fn 96)
+    (for ((k (range 0 (- bolts 1))))
+      (translate (polar (/ bolt-circle-d 2) (* k (/ 360 bolts)))
+        (translate [0 0 -1] (cylinder :h (+ plate 2) :d bolt-d :$fn 32))))))
