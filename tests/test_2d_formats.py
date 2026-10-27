@@ -240,36 +240,48 @@ def soffice() -> str | None:
 
 @pytest.mark.parametrize("ext", ["cgm", "dxf"])
 def test_libreoffice_reads(tmp_path: Path, ext: str) -> None:
-    """LibreOffice imports CGM and DXF with its own filters; converted to SVG, the drawing must
-    keep the plate's proportions and its five outlines."""
+    """LibreOffice imports CGM and DXF with its own filters. Converted to PDF, what it strokes
+    must be the plate: its outline sets the extent of everything drawn, 80 x 50 mm.
+
+    PDF rather than SVG: LibreOffice's SVG export adds invisible bounding-box and clip
+    rectangles for every shape and for the page, so "the largest shape" there is LibreOffice's
+    page structure, not our geometry. A PDF holds only what is painted."""
     exe = soffice()
     if exe is None:
         if os.environ.get("GCAD_REQUIRE_LIBREOFFICE"):
             pytest.fail("LibreOffice is required in this CI job")
         pytest.skip("LibreOffice is not installed")
-    svgelements = pytest.importorskip("svgelements")
+    pytest.importorskip("pdfminer")
+    from pdfminer.high_level import extract_pages
+    from pdfminer.layout import LTCurve
+
     out = tmp_path / f"plate.{ext}"
     export(SOURCES["plate"], out)
     converted = subprocess.run(
-        [exe, "--headless", "--convert-to", "svg", "--outdir", str(tmp_path), str(out)],
+        [exe, "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(out)],
         check=True,
         capture_output=True,
         timeout=180,
     )
+    pdf = tmp_path / "plate.pdf"
     keep = os.environ.get("GCAD_READER_ARTIFACTS")
     if keep:  # keep what LibreOffice made of our file, for inspection
         folder = Path(keep) / ext
         folder.mkdir(parents=True, exist_ok=True)
         shutil.copy(out, folder / out.name)
-        shutil.copy(tmp_path / "plate.svg", folder / f"plate-from-{ext}.svg")
+        if pdf.exists():
+            shutil.copy(pdf, folder / f"plate-from-{ext}.pdf")
         (folder / "soffice.log").write_bytes(converted.stdout + converted.stderr)
-    svg = svgelements.SVG.parse(str(tmp_path / "plate.svg"))
-    shapes = [e for e in svg.elements() if isinstance(e, svgelements.Shape) and e.bbox()]
-    boxes = np.array([s.bbox() for s in shapes], dtype=float)
-    assert len(boxes) >= 5
-    outer = boxes[np.argmax((boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]))]
-    width, height = outer[2] - outer[0], outer[3] - outer[1]
-    assert width / height == pytest.approx(80 / 50, rel=5e-3)
+    assert pdf.exists(), converted.stdout + converted.stderr
+    page = next(iter(extract_pages(str(pdf))))
+    # LTRect and LTLine are LTCurve subclasses: everything painted as a path.
+    stroked = [o for o in page if isinstance(o, LTCurve) and o.stroke]
+    assert stroked, "LibreOffice drew nothing"
+    box = np.array([o.bbox for o in stroked], dtype=float)
+    width = box[:, 2].max() - box[:, 0].min()
+    height = box[:, 3].max() - box[:, 1].min()
+    # 1% covers the hairline's width at whatever scale LibreOffice places the drawing.
+    assert width / height == pytest.approx(80 / 50, rel=1e-2)
 
 
 def test_3d_model_needs_a_section(tmp_path: Path) -> None:
