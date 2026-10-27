@@ -257,19 +257,23 @@
     (place m (linear_extrude :height z (polygon [[0 0] [x 0] [ltx y] [0 y]])))))
 
 (define (solid/ELLIPSOID r ctx)
-  (let ((m (placement (attr r 1) ctx)))
-    (place m (scale [(length r 2 "semi_axis_1" ctx) (length r 3 "semi_axis_2" ctx)
-                     (length r 4 "semi_axis_3" ctx)] (sphere 1)))))
+  ; a sphere of the first semi-axis, scaled, so it is tessellated at its own size
+  (let ((m (placement (attr r 1) ctx))
+        (a (length r 2 "semi_axis_1" ctx)) (b (length r 3 "semi_axis_2" ctx)) (c (length r 4 "semi_axis_3" ctx)))
+    (place m (scale [1 (/ b a) (/ c a)] (sphere a)))))
 
 (define (solid/RECTANGULAR_PYRAMID r ctx)
   (let ((m (placement (attr r 1) ctx))
         (x (length r 2 "xlength" ctx)) (y (length r 3 "ylength" ctx)) (h (length r 4 "height" ctx)))
     (place m (polyhedron [[0 0 0] [x 0 0] [x y 0] [0 y 0] [(/ x 2) (/ y 2) h]]
-                         [[0 1 4] [1 2 4] [2 3 4] [3 0 4] [1 0 3 2]]))))
+                         [[4 1 0] [4 2 1] [4 3 2] [4 0 3] [2 3 0 1]]))))
 
+; faces wound as polyhedron() wants them, whichever way round the four points are given
 (define (solid/TETRAHEDRON r ctx)
-  (let ((p (for ((q (attr r 1))) (point q ctx))))
-    (polyhedron p [[0 1 2] [0 3 1] [1 3 2] [2 3 0]])))
+  (let ((p (for ((q (attr r 1))) (point q ctx)))
+        (o (first p))
+        (turn (* (cross (- (get p 1) o) (- (get p 2) o)) (- (get p 3) o))))
+    (polyhedron p (if (> turn 0) [[0 1 2] [0 3 1] [1 3 2] [2 3 0]] [[0 2 1] [0 1 3] [1 2 3] [2 0 3]]))))
 
 (define BOOLEANS ["UNION" "union" "DIFFERENCE" "difference" "INTERSECTION" "intersection"])
 (define (boolean-op e (i 0))
@@ -319,8 +323,8 @@
         (m (if (is s "PLANE") (placement (attr s 1) ctx)
              (fail (where r) ": only a planar half-space can be built (GCAD's graph has no other surface)")))
         (e HALF_SPACE_EXTENT)
-        ; agreement_flag TRUE: the half-space is on the side the plane normal points to
-        (slab (place m (translate [(- e) (- e) (if inside 0 (- e))] (box [(* 2 e) (* 2 e) e])))))
+        ; agreement_flag TRUE: the normal points away from the material (Part 42 6.4.27)
+        (slab (place m (translate [(- e) (- e) (if inside (- e) 0)] (box [(* 2 e) (* 2 e) e])))))
     (if (is_undef enclosure) slab
       (let ((corner (point (attr enclosure 0) ctx)))
         (intersection slab
@@ -561,8 +565,66 @@
                              (not (is-any e ["USER_SELECTED_SHAPE_ELEMENTS" "USER_SELECTED_ELEMENTS"
                                              "INDIRECTLY_SELECTED_SHAPE_ELEMENTS"])))))))
     (if (== (len live) 0) (fail (where r) ": the sequence has no geometry")
-      (solid (last live) ctx))))
+      (if (any live sketch-command?)
+        (at r (sketch-result live ctx))
+        (solid (last live) ctx)))))
 (define (solid/PROCEDURAL_REPRESENTATION_SEQUENCE r ctx) (sequence-result r ctx))
+
+;; ---- ISO 10303-112: sketch commands --------------------------------------------------------
+; A sketch is a Part 55 sequence of commands. The commands that make a closed region become 2D
+; shapes (the sketch is their union); a curve with no area (a line, an arc, a centreline) is not
+; shown and the console says so; the operations on earlier results are refused.
+
+(define (p2 r ctx) (let ((q (point r ctx))) [(get q 0) (get q 1)]))
+(define (sketch-attr r k) (attr r k))
+(define (solid/CREATE_RECTANGLE r ctx)
+  (let ((a (p2 (attr r 1) ctx)) (b (p2 (attr r 2) ctx)) (c (p2 (attr r 3) ctx))
+        (d (unit (- b a))) (n [(- (get d 1)) (get d 0)])
+        (h (* (- c a) n)))
+    (polygon [a b (+ b (* h n)) (+ a (* h n))])))
+(define (solid/CREATE_POLYGON r ctx)
+  (let ((n (val (attr r 1))) (c (p2 (attr r 2) ctx)) (s (p2 (attr r 3) ctx))
+        (rad0 (length r 5 "circle_radius" ctx))
+        (rad (if (== (enum (attr r 4)) "CIRCUMSCRIBED") (/ rad0 (cos (/ 180 n))) rad0))
+        (v (* rad (unit (- s c))))
+        (start (atan2 (get v 1) (get v 0))))
+    (polygon (for ((k (range 0 (- n 1))))
+               (let ((a (+ start (* k (/ 360 n))))) (+ c [(* rad (cos a)) (* rad (sin a))]))))))
+(define (solid/CREATE_CIRCLE_CENTRE_POINT r ctx)
+  (place (translation (pad3 (p2 (attr r 1) ctx))) (circle (length r 2 "radius" ctx))))
+(define (solid/CREATE_CIRCLE_2_POINTS r ctx)
+  (let ((a (p2 (attr r 1) ctx)) (b (p2 (attr r 2) ctx)))
+    (place (translation (pad3 (* 0.5 (+ a b)))) (circle (* 0.5 (norm (- a b)))))))
+(define (solid/CREATE_CIRCLE_3_POINTS r ctx)
+  (let ((a (p2 (attr r 1) ctx)) (b (p2 (attr r 2) ctx)) (c (p2 (attr r 3) ctx))
+        (ax (get a 0)) (ay (get a 1)) (bx (get b 0)) (by (get b 1)) (cx (get c 0)) (cy (get c 1))
+        (d (* 2 (+ (* ax (- by cy)) (* bx (- cy ay)) (* cx (- ay by)))))
+        (aa (+ (* ax ax) (* ay ay))) (bb (+ (* bx bx) (* by by))) (cc (+ (* cx cx) (* cy cy))))
+    (if (== d 0) (fail (where r) ": the three points are on one line")
+      (let ((u [(/ (+ (* aa (- by cy)) (* bb (- cy ay)) (* cc (- ay by))) d)
+                (/ (+ (* aa (- cx bx)) (* bb (- ax cx)) (* cc (- bx ax))) d)]))
+        (place (translation (pad3 u)) (circle (norm (- a u))))))))
+(define (solid/CREATE_POLYLINE r ctx)
+  (let ((pts (for ((q (attr r 1))) (p2 q ctx))))
+    (if (near (first pts) (last pts))
+      (polygon (for ((i (range 0 (- (len pts) 2)))) (get pts i)))
+      undef)))
+(define CURVES-ONLY ["CREATE_LINE_SEGMENT_2_POINTS" "CREATE_LINE_SEGMENT_POINT_TANGENT"
+                     "CREATE_LINE_SEGMENT_2_TANGENTS" "CREATE_CENTRELINE" "CREATE_CIRCULAR_ARC_3_POINTS"
+                     "CREATE_CIRCULAR_ARC_CENTRE_ENDS" "CREATE_CIRCULAR_ARC_ANGLES"
+                     "CREATE_CIRCULAR_ARC_CONCENTRIC" "CREATE_CIRCULAR_ARC_START_CENTRE_ANGLE"
+                     "CREATE_CIRCULAR_ARC_START_CENTRE_LENGTH" "CREATE_CIRCULAR_ARC_START_END_ANGLE"
+                     "CREATE_CIRCULAR_ARC_START_END_DIRECTION" "CREATE_CIRCULAR_ARC_START_END_RADIUS"
+                     "CREATE_CIRCULAR_ARC_3_TANGENTS" "CREATE_PARABOLIC_ARC" "CREATE_SPLINE"])
+(define (sketch-command? e) (and (is_record e) (or (starts_with (kw e) "CREATE_") (starts_with (kw e) "SKETCH_"))))
+(define (sketch-result elements ctx)
+  (let ((areas (filter (for ((e elements))
+                         (if (contains CURVES-ONLY (kw e))
+                           (at e (info (kw e) ": a curve with no area is not shown"))
+                           (let ((s (solid e ctx)))
+                             (if (is_undef s) (at e (info (kw e) ": an open polyline is not shown")) s))))
+                       (fn (s) (not (is_undef s))))))
+    (if (== (len areas) 0) (fail "the sketch has no closed region to show") (union areas))))
 
 ;; ---- ISO 10303-111: features on a solid ----------------------------------------------------
 ; Round holes are a solid less cylinders (and a cone for a conical bottom), all exact; a hole
@@ -664,7 +726,21 @@
    "SWEPT_DISK_SOLID" "a sweep along a curve"
    "CYCLIDE_SEGMENT_SOLID" "a cyclide"
    "ECCENTRIC_CONE" "an eccentric cone"
-   "TRIMMED_VOLUME" "a trimmed B-spline volume"])
+   "TRIMMED_VOLUME" "a trimmed B-spline volume"
+   "CREATE_FILLET" "a sketch fillet (an arc)"
+   "CREATE_CHAMFER" "a sketch chamfer of curves"
+   "CREATE_DIVIDED_CURVE" "splitting a sketch curve"
+   "CREATE_ELLIPSE" "an ellipse"
+   "CREATE_ELLIPSE_3_POINTS" "an ellipse"
+   "CREATE_ELLIPSE_CENTRE_POINT" "an ellipse"
+   "CREATE_CIRCLE_CONCENTRIC" "a circle concentric with an earlier sketch curve"
+   "CREATE_CIRCLE_3_TANGENTS" "a circle tangent to three curves"
+   "CREATE_PATTERN_CIRCULAR" "a pattern of sketch curves"
+   "CREATE_PATTERN_RECTANGULAR" "a pattern of sketch curves"
+   "SKETCH_TRANSFORM_TRANSLATE" "moving earlier sketch curves"
+   "SKETCH_TRANSFORM_ROTATE" "moving earlier sketch curves"
+   "SKETCH_TRANSFORM_MIRROR" "moving earlier sketch curves"
+   "SKETCH_TRANSFORM_SCALE" "moving earlier sketch curves"])
 (define (unsupported-why r (i 0))
   (let ((names (for ((p (partials r))) (kw p))))
     (if (>= i (len UNSUPPORTED))
