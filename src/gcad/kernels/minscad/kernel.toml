@@ -1,0 +1,8 @@
+id = "minscad"
+name = "minscad (OpenSCAD subset)"
+version = "0.1.0"
+description = "A subset of the OpenSCAD language: modules, functions, for/if/let, list comprehensions with one for, ranges, and the OpenSCAD primitives and transforms."
+# .scad files may use features outside the subset; minscad claims them only with --kernel minscad.
+extensions = [".mscad"]
+comment = "//"
+parser = "lalr"

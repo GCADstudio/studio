@@ -1,0 +1,8 @@
+id = "csg"
+name = "CSG S-expressions"
+version = "0.2.0"
+description = "An S-expression modelling language that is GCore itself; a homoiconic language needs only three rewrite rules."
+# .gcsg, not .csg: OpenSCAD already uses .csg for its CSG-tree export.
+extensions = [".gcsg"]
+comment = ";"
+parser = "lalr"

@@ -1,0 +1,12 @@
+# csg is homoiconic: its syntax tree already is GCore, so three rules suffice.
+
+[rules]
+start = "$*"
+list = "($*)"
+vector = "[$*]"
+
+[tokens]
+NUMBER = "number"
+STRING = "string"
+KEYWORD = "keyword"
+SYMBOL = "symbol"

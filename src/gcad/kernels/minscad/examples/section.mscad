@@ -1,0 +1,10 @@
+// A planar section through the SPEC AC-2 test part at half its height:
+// the 40 x 30 mm outline with the 8 mm hole. projection(cut = true) cuts at z = 0,
+// so the part is lowered by 5 mm first.
+
+projection(cut = true)
+    translate([0, 0, -5])
+        difference() {
+            cube([40, 30, 10]);
+            translate([20, 15, -1]) cylinder(h = 12, r = 4);
+        }

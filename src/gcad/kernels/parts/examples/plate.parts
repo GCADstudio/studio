@@ -1,0 +1,10 @@
+# Mounting plate with a boss and four bolt holes. Units: mm.
+# Parts first (joined), then cuts (subtracted).
+
+part base: box 80 50 4 color silver
+part boss: cylinder d 20 h 12 at 40 25 0 color silver
+
+cut bore:       cylinder d 8 h 20 at 40 25 -1
+cut near-holes: cylinder d 5 h 10 at 10 10 -1 repeat 2 step 60 0 0
+cut far-holes:  cylinder d 5 h 10 at 10 40 -1 repeat 2 step 60 0 0
+cut countersink: cone d 8 12 h 2.01 at 40 25 10

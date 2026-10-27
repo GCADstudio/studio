@@ -1,0 +1,9 @@
+// A flat mounting plate: 80 x 50 mm with four 5 mm holes and a slot.
+// A 2D model: export it to DXF, SVG, PDF, EPS or CGM for cutting or drawing.
+
+difference() {
+    square([80, 50]);
+    for (x = [10, 70], y = [10, 40])
+        translate([x, y]) circle(d = 5, $fn = 32);
+    translate([30, 22]) square([20, 6]);
+}

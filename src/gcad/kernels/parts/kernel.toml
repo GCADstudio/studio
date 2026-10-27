@@ -1,0 +1,7 @@
+id = "parts"
+name = "Parts list"
+version = "0.1.0"
+description = "A declarative parts list: solids to add, then solids to cut, one per line. Defined only by kernel.toml, grammar.lark and rewrite.toml (SPEC AC-5)."
+extensions = [".parts"]
+comment = "#"
+parser = "lalr"

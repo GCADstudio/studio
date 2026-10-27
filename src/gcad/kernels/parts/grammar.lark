@@ -1,0 +1,33 @@
+// parts: one solid per line. All "part" lines come first and are joined; the "cut"
+// lines that follow are subtracted. Placements apply left to right.
+//
+//   part base: box 80 50 4 color silver
+//   cut  hole: cylinder d 5 h 10 at 10 10 -1 repeat 2 step 60 0 0
+
+start: _NL? parts cuts
+
+parts: part*
+cuts: cut*
+
+part: "part" NAME ":" placed _NL
+cut: "cut" NAME ":" placed _NL
+
+?placed: shape
+       | placed "at" NUMBER NUMBER NUMBER                       -> at
+       | placed "turn" NUMBER NUMBER NUMBER                     -> turn
+       | placed "color" NAME                                    -> paint
+       | placed "repeat" NUMBER "step" NUMBER NUMBER NUMBER     -> repeat
+
+?shape: "box" NUMBER NUMBER NUMBER                              -> box
+      | "cylinder" "d" NUMBER "h" NUMBER                        -> cylinder
+      | "cone" "d" NUMBER NUMBER "h" NUMBER                     -> cone
+      | "sphere" "d" NUMBER                                     -> sphere
+
+NAME: /[A-Za-z_][A-Za-z0-9_-]*/
+NUMBER: /[+-]?(\d+\.?\d*|\.\d+)/
+COMMENT: /#[^\n]*/
+// One line break token covers blank lines and whole-line comments in between.
+_NL: /(\r?\n[\t ]*(#[^\n]*)?)+/
+
+%ignore COMMENT
+%ignore /[\t ]+/

@@ -1,0 +1,22 @@
+// Exercises more of minscad: children() and $children, default parameters, a list
+// comprehension, let, a ternary, if/else, index access, v.x, and the * modifier.
+
+module row(spacing = 12) {
+    for (i = [0 : $children - 1])
+        translate([i * spacing, 0, 0]) children(i);
+}
+
+sizes = [for (k = [1 : 4]) 4 + k * 2];
+function radius(big) = big ? 6 : 3;
+offset = [0, 0, 5];
+
+row(spacing = 15) {
+    cube(sizes[0], center = true);
+    let (h = sizes[2]) cylinder(h = h, r1 = radius(true), r2 = radius(false), center = true, $fn = 48);
+    if (len(sizes) > 3) rotate([0, 0, 45]) cube([sizes[3], 2, 2], center = true);
+    else cube(1);
+    translate([0, 0, offset.z]) linear_extrude(height = 4, scale = 0.5)
+        square([4, 6], center = true);
+}
+
+*cube(1000);  // disabled: not part of the model

@@ -1,0 +1,22 @@
+{
+  "name": "gcad-studio-vendor",
+  "private": true,
+  "description": "Builds the offline JavaScript bundles in src/gcad/web/vendor. Run: npm ci && npm run build",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "6.18.6",
+    "@codemirror/commands": "6.8.1",
+    "@codemirror/language": "6.11.2",
+    "@codemirror/lint": "6.8.5",
+    "@codemirror/search": "6.5.11",
+    "@codemirror/state": "6.5.2",
+    "@codemirror/view": "6.38.1",
+    "@lezer/highlight": "1.2.1",
+    "esbuild": "0.25.8",
+    "three": "0.178.0"
+  }
+}

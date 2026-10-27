@@ -1,0 +1,24 @@
+; L-bracket with a row of mounting holes in each flange.
+; Shows variables, a module with a default parameter, a loop and colour.
+
+(define width 40)
+(define depth 30)
+(define thickness 5)
+(define height 25)
+(define hole-d 5)
+(define pitch 10)
+
+; A row of n through-holes along +x, sized for a plate of thickness h.
+(module (holes n (h thickness))
+  (for ((i (range 0 (- n 1))))
+    (translate [(* i pitch) 0 -1] (cylinder :h (+ h 2) :d hole-d))))
+
+(color [0.25 0.45 0.85]
+  (difference
+    (union
+      (box [width depth thickness])
+      (box [width thickness height]))
+    ; holes in the base plate
+    (translate [10 (/ depth 2) 0] (holes 3))
+    ; holes in the upright plate, drilled along +y
+    (translate [10 0 (- height 8)] (rotate [-90 0 0] (holes 3)))))

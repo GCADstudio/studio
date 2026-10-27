@@ -1,0 +1,22 @@
+# parts -> GCore, without any Python or prelude: every rule is a GCore template.
+
+[rules]
+start = "(difference (union $1*) $2*)"
+parts = "$*"
+cuts = "$*"
+part = "(name $1:str $2)"
+cut = "(name $1:str $2)"
+
+box = "(box [$1 $2 $3])"
+cylinder = "(cylinder :h $2 :d $1)"
+cone = "(cylinder :h $3 :d1 $1 :d2 $2)"
+sphere = "(sphere :d $1)"
+
+at = "(translate [$2 $3 $4] $1)"
+turn = "(rotate [$2 $3 $4] $1)"
+paint = "(color $2:str $1)"
+repeat = "(union (for ((i (range 0 (- $2 1)))) (translate (* i [$3 $4 $5]) $1)))"
+
+[tokens]
+NAME = "symbol"
+NUMBER = "number"

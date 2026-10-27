@@ -1,0 +1,22 @@
+; OpenSCAD names that differ from GCore. Evaluated in a scope of its own, so a program
+; may redefine any of these.
+
+(define cube box)
+(define square rect)
+(define multmatrix matrix)
+
+; children() / children(i) / children([i j]) inside a module.
+(define (pick-children kids (i undef))
+  (if (is_undef i)
+    kids
+    (if (is_list i)
+      (for ((k i)) (get kids k))
+      (get kids i))))
+
+; projection(cut = true) cuts at z = 0; projection() takes the outline seen from above.
+(module (projection (cut false))
+  (if cut (section children) (project children)))
+
+; v.x, v.y, v.z
+(define (member v key)
+  (get v (if (== key "x") 0 (if (== key "y") 1 (if (== key "z") 2 -1)))))

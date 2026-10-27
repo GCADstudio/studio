@@ -1,0 +1,29 @@
+// Pipe flange: a revolved profile with a bolt circle. Same model as csg/examples/flange.gcsg.
+
+outer_d = 120;
+bore_d = 50;
+plate = 12;
+hub_d = 70;
+hub_h = 30;
+bolts = 6;
+bolt_d = 11;
+bolt_circle_d = 95;
+
+// Half cross-section in the XY plane; rotate_extrude spins it about Z.
+module profile()
+    polygon([[bore_d / 2, 0],
+             [outer_d / 2, 0],
+             [outer_d / 2, plate],
+             [hub_d / 2, plate],
+             [hub_d / 2, hub_h],
+             [bore_d / 2, hub_h]]);
+
+function polar(r, angle) = [r * cos(angle), r * sin(angle), 0];
+
+color("silver")
+    difference() {
+        rotate_extrude($fn = 96) profile();
+        for (k = [0 : bolts - 1])
+            translate(polar(bolt_circle_d / 2, k * (360 / bolts)))
+                translate([0, 0, -1]) cylinder(h = plate + 2, d = bolt_d, $fn = 32);
+    }
