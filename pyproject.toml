@@ -81,3 +81,9 @@ disallow_untyped_defs = true
 module = ["manifold3d", "manifold3d.*", "OCP", "OCP.*"]
 ignore_missing_imports = true
 follow_imports = "skip"
+
+# Only inside Pyodide (the web studio, SPEC §4.1): its FFI, the JS global scope, and the
+# Manifold WebAssembly module the worker registers.
+[[tool.mypy.overrides]]
+module = ["pyodide", "pyodide.*", "js", "_gcad_manifold"]
+ignore_missing_imports = true

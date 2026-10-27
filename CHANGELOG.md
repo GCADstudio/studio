@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+**Web studio (M7, SPEC §4.1).** The studio as a static site that needs nothing installed: the same UI talks to `gcad.server.Studio` running in Pyodide in a Web Worker instead of to `gcad serve`. Back-end M runs on Manifold's own WebAssembly build through a small binding with the manifold3d API, so the geometry matches the native back-end (checked for every bundled example). Every mesh and 2D format exports in the browser; STEP and IGES say they need the local install. Files are kept in the browser, with Upload and Download. A runaway model is replaced by the next edit within about a second, by a standby worker. `tools/build_site.py` builds the site reproducibly from pinned, SHA-256-checked Pyodide, Manifold and wheels; CI tests it in headless Chrome and publishes it to GitHub Pages from `master`.
+
 ## 0.1.0
 
 The first release: the minimum viable example of [the specification](docs/SPEC.md), milestones M0 to M6.

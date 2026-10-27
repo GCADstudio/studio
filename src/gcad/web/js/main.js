@@ -1,5 +1,5 @@
 // GCAD Studio front end: wires the editor, the viewer and the server together.
-import { rpc, openOnStart } from "./rpc.js";
+import { rpc, openOnStart, mode, onTransportStatus } from "./rpc.js";
 import { hydrateIcons, icon } from "./icons.js";
 import { createEditor } from "./editor.js";
 import { Viewer } from "./viewer.js";
@@ -8,6 +8,7 @@ const $ = (sel) => document.querySelector(sel);
 const LIVE_DELAY = 380;
 const SCRUB_DELAY = 70;
 const DEFAULT_FILE = "example:minscad/examples/bracket.mscad";
+const WEB = mode === "web"; // the Python core runs in this tab (SPEC §4.1)
 const store = {
   get(key) { try { return localStorage.getItem(`gcad.${key}`); } catch { return null; } },
   set(key, value) { try { localStorage.setItem(`gcad.${key}`, value); } catch { /* private mode */ } },
@@ -83,7 +84,7 @@ async function run() {
       gcore: wantGcore,
     });
   } catch (error) {
-    if (seq === state.seq) setStatus("error", "Server unreachable");
+    if (seq === state.seq) setStatus("error", WEB ? "Python stopped" : "Server unreachable");
     log(String(error.message || error), "error");
     return;
   }
@@ -293,10 +294,18 @@ async function openPalette() {
   state.root = listing.root;
   paletteItems = [
     ...listing.examples.map((f) => ({ section: "Examples", icon: "book", name: f.name, kernel: f.kernel, run: () => openFile(f.path) })),
-    ...listing.files.map((f) => ({ section: "This folder", icon: "file", name: f.path, kernel: f.kernel, run: () => openFile(f.path) })),
+    ...listing.files.map((f) => ({ section: WEB ? "In this browser" : "This folder", icon: "file", name: f.path, kernel: f.kernel, run: () => openFile(f.path) })),
     ...[...state.kernels.values()].map((k) => ({ section: "New", icon: "plus", name: `New ${k.name}`, kernel: k.id, run: () => newFile(k.id) })),
   ];
-  $("#palette-foot").innerHTML = `<span><kbd>↑</kbd> <kbd>↓</kbd> to move</span><span><kbd>Enter</kbd> to open</span><span class="muted">folder: ${escapeHtml(listing.root)}</span>`;
+  if (WEB) {
+    // Files live in the browser here, so moving them to and from the disk comes first.
+    paletteItems.unshift(
+      { section: "Your disk", icon: "upload", name: "Upload a file…", kernel: "open from disk", run: uploadFile },
+      { section: "Your disk", icon: "download", name: "Download the open file", kernel: "save a copy", run: downloadFile, keep: true },
+    );
+  }
+  const where = WEB ? "files are kept in this browser" : `folder: ${escapeHtml(listing.root)}`;
+  $("#palette-foot").innerHTML = `<span><kbd>↑</kbd> <kbd>↓</kbd> to move</span><span><kbd>Enter</kbd> to open</span><span class="muted">${where}</span>`;
   $("#palette").hidden = false;
   const input = $("#palette-input");
   input.value = "";
@@ -347,8 +356,45 @@ function choosePalette(i) {
   const item = filteredPalette()[i];
   if (!item) return;
   $("#palette").hidden = true;
-  if (state.dirty && !confirm("Discard unsaved changes?")) return;
+  if (!item.keep && state.dirty && !confirm("Discard unsaved changes?")) return;
   item.run();
+}
+
+function saveBlob(bytes, name, type) {
+  const url = URL.createObjectURL(new Blob([bytes], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// Web mode: files live in the browser, so these move them to and from the visitor's disk.
+function downloadFile() {
+  saveBlob(editor.text(), state.file.name, "text/plain");
+  toast(`Downloaded ${state.file.name}`);
+}
+
+function uploadFile() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.hidden = true;
+  input.accept = [...state.kernels.values()].flatMap((k) => k.extensions).join(",");
+  document.body.append(input); // some browsers open no chooser for a detached input
+  input.addEventListener("cancel", () => input.remove());
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    input.remove();
+    if (!file) return;
+    try {
+      const saved = await rpc("file/save", { path: file.name, text: await file.text() });
+      await openFile(saved.path);
+      toast(`Uploaded ${saved.name}`);
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+  input.click();
 }
 
 $("#palette-input").addEventListener("input", () => { paletteIndex = 0; renderPalette(); });
@@ -386,7 +432,16 @@ async function openExport() {
     section.innerHTML = `<h3>${group.title} <span>${group.note}</span></h3>`;
     const grid = document.createElement("div");
     grid.className = "export-grid";
-    for (const f of state.formats.filter((x) => x.needs === group.needs)) {
+    const members = state.formats.filter((x) => x.needs === group.needs);
+    const reasons = new Set(members.map((f) => f.reason));
+    if (members.length && reasons.size === 1 && members[0].reason) {
+      // The whole group is out of reach here (no OpenCASCADE): say why once, in the open.
+      const note = document.createElement("p");
+      note.className = "group-note";
+      note.textContent = members[0].reason.replace(/^./, (c) => c.toUpperCase()) + ".";
+      section.append(note);
+    }
+    for (const f of members) {
       const button = document.createElement("button");
       button.className = "format";
       button.innerHTML = `<b>${f.ext}</b><small>${DESCRIPTIONS[f.id] || f.name}</small>`;
@@ -419,13 +474,7 @@ async function runExport(format, button) {
         ascii: $("#opt-ascii").checked,
       },
     });
-    const bytes = Uint8Array.from(atob(result.data), (c) => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: result.mime }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = result.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    saveBlob(Uint8Array.from(atob(result.data), (c) => c.charCodeAt(0)), result.name, result.mime);
     toast(`Exported ${result.name} · ${fmt(result.bytes / 1024)} KB`);
     log(`exported ${result.name} (${result.bytes} bytes, back-end ${result.backend})`);
   } catch (error) {
@@ -521,15 +570,23 @@ const savedWidth = store.get("editorWidth");
 if (savedWidth) workspace.style.setProperty("--editor-w", `${savedWidth}%`);
 
 // For automated UI checks and debugging in the browser console.
-window.gcad = { viewer, editor, state, run };
+window.gcad = { viewer, editor, state, run, rpc };
 
 // ---------- start ----------
 
 async function start() {
+  if (WEB) {
+    $("#mode-chip").hidden = false;
+    setStatus("busy", "Starting Python");
+    onTransportStatus((text) => {
+      log(text);
+      if ($("#status").dataset.state !== "ok") setStatus("busy", text);
+    });
+  }
   try {
     const hello = await rpc("hello");
     state.root = hello.root;
-    log(`${hello.generator} · folder ${hello.root}`);
+    log(WEB ? `${hello.generator} · running in this browser, no server` : `${hello.generator} · folder ${hello.root}`);
     for (const [name, status] of Object.entries(hello.backends)) if (status !== "ok") log(`back-end ${name}: ${status}`, "warn");
     const kernels = await rpc("kernel/list");
     const select = $("#kernel");

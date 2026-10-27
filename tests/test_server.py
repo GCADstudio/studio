@@ -72,6 +72,13 @@ def test_rpc_needs_the_token(server: StudioServer) -> None:
     assert request(server, "POST", "/rpc", body, {"X-GCAD-Token": "wrong"})[0] == 401
 
 
+def test_malformed_requests_get_json_rpc_errors(server: StudioServer) -> None:
+    headers = {"X-GCAD-Token": server.token}
+    for body, code in [(b"{not json", -32700), (b"[1, 2]", -32700), (b'{"id": 3}', -32601)]:
+        status, data = request(server, "POST", "/rpc", body, headers)
+        assert status == 200 and json.loads(data)["error"]["code"] == code, body
+
+
 def test_foreign_host_header_is_refused(server: StudioServer) -> None:
     """A DNS-rebinding page reaches 127.0.0.1 under its own host name."""
     status, _ = request(server, "GET", "/", headers={"Host": "attacker.example:80"})

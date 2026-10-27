@@ -112,6 +112,67 @@ jobs:
           path: ui-screenshots
           if-no-files-found: ignore
 
+  # The web studio (SPEC §4.1, AC-9 to AC-12): build the static site from the pinned,
+  # checksummed assets and drive it in headless Chrome, with the Python core in Pyodide and
+  # only a static file server behind it. On master the tested site becomes the Pages artifact.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: System libraries for MeshLab (X3D and VRML read-back)
+        run: |
+          echo "set man-db/auto-update false" | sudo debconf-set-selections
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 \
+            libopengl0 libglu1-mesa
+      - run: python -m pip install -e ".[dev]" playwright
+      - uses: actions/cache@v4
+        with:
+          path: .cache/site-assets
+          key: site-assets-${{ hashFiles('tools/site-assets.toml') }}
+      - name: Build the site
+        run: python tools/build_site.py --out site
+      - run: pytest -q -rs tests/test_web.py
+        env:
+          GCAD_SITE: site
+          GCAD_REQUIRE_WEB: "1"
+          GCAD_REQUIRE_READERS: "1"
+          GCAD_UI_ARTIFACTS: web-screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-screenshots
+          path: web-screenshots
+          if-no-files-found: ignore
+      - uses: actions/upload-pages-artifact@v5
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        with:
+          path: site
+
+  # Publishes the site the web job built and tested, only from master. GitHub Pages must be
+  # enabled for the repository with source "GitHub Actions".
+  pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5
+
   # LibreOffice is the only independent CGM reader; it is large, so it gets a job of its own
   # where a slow package mirror cannot hold up the main matrix.
   libreoffice:

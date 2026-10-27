@@ -1,0 +1,44 @@
+# Third-party files of the web studio (SPEC §4.1, FR-W7), fetched by tools/build_site.py.
+# Every download is pinned to an exact version and checked against its SHA-256; the build
+# stops on a mismatch. Nothing listed here is committed to git.
+#
+# Upgrading: change a version and URL, run the build once, and copy the digest it reports.
+# Keep manifold-3d at the version of the manifold3d wheel (FR-W2), and Pyodide on a release
+# whose CPython the CI matrix tests natively.
+
+# CPython 3.13 in WebAssembly. The npm package has the runtime and the lock file; the
+# packages below come from the release's CDN folder and are checked against that lock file.
+[pyodide]
+version = "0.29.5"
+url = "https://registry.npmjs.org/pyodide/-/pyodide-0.29.5.tgz"
+sha256 = "6749b10ee515a1458ecea36d860c8ce2a48366e85b3f92d749ad1840e4aff181"
+files = ["pyodide.mjs", "pyodide.asm.js", "pyodide.asm.wasm", "python_stdlib.zip", "pyodide-lock.json"]
+packages_url = "https://cdn.jsdelivr.net/pyodide/v0.29.5/full/"
+# What gcad needs from Pyodide's own packages; their dependencies are added from the lock.
+packages = ["numpy", "micropip", "pyparsing", "typing-extensions", "fonttools"]
+license = "MPL-2.0"
+source = "https://github.com/pyodide/pyodide/tree/0.29.5"
+
+# Manifold's own WebAssembly build, back-end M in the browser.
+[manifold]
+version = "3.5.4"
+url = "https://registry.npmjs.org/manifold-3d/-/manifold-3d-3.5.4.tgz"
+sha256 = "cf57c91fcd33b6315bff28e424ac8c5f04acb5410e9dd8e9886838303910c568"
+files = ["manifold.js", "manifold.wasm", "LICENSE"]
+license = "Apache-2.0"
+source = "https://github.com/elalish/manifold/tree/v3.5.4"
+
+# Pure-Python wheels that Pyodide does not ship, from PyPI.
+[[wheels]]
+name = "lark"
+version = "1.3.1"
+url = "https://files.pythonhosted.org/packages/82/3d/14ce75ef66813643812f3093ab17e46d3a206942ce7376d31ec2d36229e7/lark-1.3.1-py3-none-any.whl"
+sha256 = "c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12"
+license = "MIT"
+
+[[wheels]]
+name = "ezdxf"
+version = "1.4.5"
+url = "https://files.pythonhosted.org/packages/fb/d7/9f420747a1edf562cabff228f8d1f7a16530ad021ea6f84c775ca15dec9b/ezdxf-1.4.5-py3-none-any.whl"
+sha256 = "70a79ec7d40990f60453e3c87ffe9f668907ee061cf6f4c0a3794d032ec2b40e"
+license = "MIT"

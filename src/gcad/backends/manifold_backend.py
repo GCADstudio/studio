@@ -7,11 +7,17 @@ triangle traces back to the graph node that created it and the colour it was giv
 from __future__ import annotations
 
 import math
+import sys
 from functools import reduce
 from typing import Any, TypeAlias
 
-import manifold3d as mf
 import numpy as np
+
+if sys.platform == "emscripten":
+    # In the browser (SPEC §4.1): Manifold's own WebAssembly build behind the same API.
+    from gcad.backends import manifold_js as mf
+else:
+    import manifold3d as mf
 
 from gcad.core.graph import Graph, Node, circle_segments, default_tolerance, node_matrix
 from gcad.diagnostics import GcadError
