@@ -56,7 +56,8 @@ def shot(page: object, name: str) -> None:
     folder = os.environ.get("GCAD_UI_ARTIFACTS")
     if folder:
         Path(folder).mkdir(parents=True, exist_ok=True)
-        page.screenshot(path=str(Path(folder) / f"{name}.png"))  # type: ignore[attr-defined]
+        # Finish the dialogs' fade-in first, or the capture catches them half transparent.
+        page.screenshot(path=str(Path(folder) / f"{name}.png"), animations="disabled")  # type: ignore[attr-defined]
 
 
 def canvas_colors(page: object) -> int:
