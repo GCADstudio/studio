@@ -129,7 +129,10 @@ const fmt = (v) => number.format(v).replace(/,/g, " ");
 function showModelCard(result) {
   const card = $("#model-card");
   card.replaceChildren();
-  const [lo, hi] = result.bounds || [[0, 0, 0], [0, 0, 0]];
+  // Nothing built (a B-rep left out in the browser, only its annotations shown): no stats.
+  card.hidden = !result.bounds;
+  if (!result.bounds) return;
+  const [lo, hi] = result.bounds;
   const size = hi.map((v, i) => v - lo[i]);
   const head = document.createElement("div");
   head.className = "size";
