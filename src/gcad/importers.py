@@ -10,11 +10,9 @@ import io
 import struct
 import xml.etree.ElementTree as ET
 import zipfile
-from functools import lru_cache
 
 import numpy as np
 
-from gcad.core import blobs
 from gcad.diagnostics import GcadError
 
 MESH_FORMATS = ("stl", "off", "3mf")
@@ -32,13 +30,22 @@ def read_mesh(data: bytes, fmt: str) -> Mesh:
     raise GcadError(f"cannot read '{fmt}' meshes (readable: {', '.join(MESH_FORMATS)})")
 
 
-@lru_cache(maxsize=16)
-def imported_mesh(digest: str, fmt: str) -> Mesh:
-    """The mesh stored under `digest` in the blob store; read once per process."""
-    vertices, tris = read_mesh(blobs.get(digest), fmt)
-    vertices.flags.writeable = False
-    tris.flags.writeable = False
-    return vertices, tris
+_MESH_CACHE: dict[tuple[str, str], Mesh] = {}
+_MESH_CACHE_SIZE = 16
+
+
+def imported_mesh(data: bytes, digest: str, fmt: str) -> Mesh:
+    """The mesh in `data` (whose SHA-256 is `digest`), read once per process and kept for the
+    next evaluations of the same file."""
+    key = (digest, fmt)
+    if key not in _MESH_CACHE:
+        vertices, tris = read_mesh(data, fmt)
+        vertices.flags.writeable = False
+        tris.flags.writeable = False
+        while len(_MESH_CACHE) >= _MESH_CACHE_SIZE:
+            del _MESH_CACHE[next(iter(_MESH_CACHE))]
+        _MESH_CACHE[key] = (vertices, tris)
+    return _MESH_CACHE[key]
 
 
 def _weld(corners: np.ndarray) -> Mesh:

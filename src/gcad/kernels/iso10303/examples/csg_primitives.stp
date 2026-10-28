@@ -1,0 +1,85 @@
+ISO-10303-21;
+HEADER;
+/* Every ISO 10303-42 CSG primitive GCAD builds, in one CSG model, written by hand.
+   A row of solids along x, joined; a boxed half-space cuts the top off the block. */
+FILE_DESCRIPTION(('ISO 10303-42 CSG primitives'),'2;1');
+FILE_NAME('csg_primitives.stp','2026-10-27T00:00:00',(''),(''),'','','');
+FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF'));
+ENDSEC;
+DATA;
+#1=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));
+#2=(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.));
+#3=(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT());
+#4=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#1,'distance_accuracy_value','confusion accuracy');
+#5=(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#4))GLOBAL_UNIT_ASSIGNED_CONTEXT((#1,#2,#3))REPRESENTATION_CONTEXT('3D','csg'));
+#6=APPLICATION_CONTEXT('managed model based 3d engineering');
+#7=APPLICATION_PROTOCOL_DEFINITION('international standard','ap242_managed_model_based_3d_engineering_mim_lf',2020,#6);
+#8=PRODUCT_CONTEXT('',#6,'mechanical');
+/* placements */
+#10=DIRECTION('z',(0.,0.,1.));
+#11=DIRECTION('x',(1.,0.,0.));
+#12=CARTESIAN_POINT('origin',(0.,0.,0.));
+#13=AXIS2_PLACEMENT_3D('',#12,#10,#11);
+#14=CARTESIAN_POINT('',(30.,10.,0.));
+#15=AXIS1_PLACEMENT('',#14,#10);
+#16=CARTESIAN_POINT('',(50.,10.,12.));
+#17=AXIS1_PLACEMENT('',#16,#10);
+#18=CARTESIAN_POINT('',(80.,10.,5.));
+#19=AXIS1_PLACEMENT('',#18,#10);
+#20=CARTESIAN_POINT('',(100.,0.,0.));
+#21=AXIS2_PLACEMENT_3D('',#20,#10,#11);
+#22=CARTESIAN_POINT('',(130.,10.,10.));
+#23=AXIS2_PLACEMENT_3D('',#22,#10,#11);
+#24=CARTESIAN_POINT('',(150.,0.,0.));
+#25=AXIS2_PLACEMENT_3D('',#24,#10,#11);
+/* the primitives */
+#30=BLOCK('block',#13,20.,20.,20.);
+#31=RIGHT_CIRCULAR_CYLINDER('cylinder',#15,20.,6.);
+#32=RIGHT_CIRCULAR_CONE('cone',#17,12.,2.,0.5);
+#33=TORUS('torus',#19,8.,3.);
+#34=RIGHT_ANGULAR_WEDGE('wedge',#21,20.,20.,10.,5.);
+#35=SPHERE('sphere',6.,#22);
+#36=ELLIPSOID('ellipsoid',#23,9.,5.,4.);
+#37=RECTANGULAR_PYRAMID('pyramid',#25,16.,16.,12.);
+#38=CARTESIAN_POINT('',(180.,0.,0.));
+#39=CARTESIAN_POINT('',(196.,0.,0.));
+#40=CARTESIAN_POINT('',(180.,16.,0.));
+#41=CARTESIAN_POINT('',(180.,0.,16.));
+#42=TETRAHEDRON('tetrahedron',(#38,#39,#40,#41));
+/* a boxed half-space: everything below z = 15 within its box domain */
+#50=CARTESIAN_POINT('',(0.,0.,15.));
+#51=AXIS2_PLACEMENT_3D('',#50,#10,#11);
+#52=PLANE('',#51);
+#53=CARTESIAN_POINT('',(-1.,-1.,-1.));
+#54=BOX_DOMAIN(#53,22.,22.,22.);
+#55=BOXED_HALF_SPACE('below z = 15',#52,.T.,#54);
+#56=BOOLEAN_RESULT('top cut off',.INTERSECTION.,#30,#55);
+/* a replica: the cylinder moved 40 mm along y by a transformation operator */
+#60=CSG_SOLID('',#31);
+#61=CARTESIAN_POINT('',(0.,40.,0.));
+#62=CARTESIAN_TRANSFORMATION_OPERATOR_3D('move','move',$,#11,$,#61,1.,#10);
+#63=SOLID_REPLICA('cylinder copy',#60,#62);
+/* joined */
+#70=BOOLEAN_RESULT('',.UNION.,#56,#31);
+#71=BOOLEAN_RESULT('',.UNION.,#70,#32);
+#72=BOOLEAN_RESULT('',.UNION.,#71,#33);
+#73=BOOLEAN_RESULT('',.UNION.,#72,#34);
+#74=BOOLEAN_RESULT('',.UNION.,#73,#35);
+#75=BOOLEAN_RESULT('',.UNION.,#74,#36);
+#76=BOOLEAN_RESULT('',.UNION.,#75,#37);
+#77=BOOLEAN_RESULT('',.UNION.,#76,#42);
+#78=BOOLEAN_RESULT('',.UNION.,#77,#63);
+#79=CSG_SOLID('primitives',#78);
+#80=CSG_SHAPE_REPRESENTATION('primitives',(#79),#5);
+/* a colour on the whole solid, as AP242 styles it */
+#90=COLOUR_RGB('',0.2,0.5,0.8);
+#91=FILL_AREA_STYLE_COLOUR('',#90);
+#92=FILL_AREA_STYLE('',(#91));
+#93=SURFACE_STYLE_FILL_AREA(#92);
+#94=SURFACE_SIDE_STYLE('',(#93));
+#95=SURFACE_STYLE_USAGE(.BOTH.,#94);
+#96=PRESENTATION_STYLE_ASSIGNMENT((#95));
+#97=STYLED_ITEM('colour',(#96),#79);
+#98=MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',(#97),#5);
+ENDSEC;
+END-ISO-10303-21;

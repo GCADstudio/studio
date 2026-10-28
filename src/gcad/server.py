@@ -35,7 +35,7 @@ from gcad.backends import available_backends, get_backend, select_backend
 from gcad.core.evaluator import Limits
 from gcad.core.sexpr import to_text
 from gcad.diagnostics import Diagnostic, GcadError
-from gcad.exporters import FORMATS, ExportJob, export
+from gcad.exporters import FORMATS, ExportJob, GraphOnly, export
 from gcad.kernels import BUNDLED, Kernel, discover, is_trusted, kernel_for, trust
 from gcad.pipeline import evaluate_source
 
@@ -67,6 +67,13 @@ def _diagnostic(d: Diagnostic, file: str) -> dict[str, object]:
             }
         )
     return out
+
+
+class GraphBackend:
+    """No geometry engine: formats written from the graph alone."""
+
+    name = "none"
+    capabilities = frozenset({"graph"})
 
 
 class Studio:
@@ -302,12 +309,18 @@ class Studio:
             raise RpcError(f"format '{format}' is not available")
         k = self.kernel(kernel)
         with self.lock:
-            evaluated = evaluate_source(source, file, k, self.limits, self.folder_of(path))
+            evaluated = evaluate_source(
+                source, file, k, self.limits, self.folder_of(path), trace=fmt.traced
+            )
             graph = evaluated.result.graph
             if not evaluated.result.ok or graph is None:
                 raise RpcError("the model has errors; fix them before exporting")
-            backend = select_backend("auto", fmt.needs)
-            model = backend.realize(graph)
+            if fmt.needs == "graph":
+                backend: Any = GraphBackend()
+                model: Any = GraphOnly(graph.root.dim)
+            else:
+                backend = select_backend("auto", fmt.needs)
+                model = backend.realize(graph)
             stem = Path(file).stem or "model"
             with tempfile.TemporaryDirectory() as tmp:
                 out = Path(tmp) / f"{stem}{fmt.extensions[0]}"

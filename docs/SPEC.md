@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 plan (M8 to M13, §12.2; AC-13 to AC-20, §10) was approved on 2026-10-27; M8 is implemented. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 plan (M8 to M13, §12.2; AC-13 to AC-20, §10) was approved on 2026-10-27; M8 is implemented. M14 (ISO 10303 parametric exchange, §5.5) and M15 (PMI viewing), §12.3, with AC-21 to AC-26, are proposed and await approval. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -116,6 +116,9 @@ Priority uses MoSCoW: **M** = Must for the MVE, **S** = Should, **C** = Could.
 | FR-C5 | M | Geometry built-ins (§5.3) produce graph nodes; they never compute geometry during evaluation. |
 | FR-C6 | M | Limits against runaway or hostile sources: recursion depth (default 1,000), loop iterations (10⁶), graph nodes (10⁵), wall time (10 s). Exceeding one returns a diagnostic, never a hang. |
 | FR-C7 | M | Diagnostics (parse, rewrite, evaluation, back-end) carry severity, message and source span. |
+| FR-C8 | S | `letrec`: bindings in any order, each evaluated once when first used; a name bound twice and a cycle of references are errors that name them. Without a body, its value is the list of every binding's value. (M14, for languages with forward references such as ISO 10303-21.) |
+| FR-C9 | S | Records: `(record ...)` makes a list that remembers its source span; `(at record body)` attributes the geometry and diagnostics of body to it, so code in a prelude can build geometry that points back to the user's source. (M14.) |
+| FR-C10 | S | Trace mode: the program's top-level numeric definitions are its parameters, and arithmetic keeps how each number was computed from them, without changing the graph (FR-G1). Exporters that carry parameters use it. (M14.) |
 
 ### 5.2 Kernels: a language defined by a formal grammar
 
@@ -150,7 +153,8 @@ range_step = "(range $1 $3 $2)"
 | FR-K5 | M | Syntax highlighting is derived from the grammar: word literals become keywords, other literals operators, ignored terminals comments, and named terminals take the classes in `rewrite.toml [tokens]`. `gcad kernel describe <id>` prints them for an editor. |
 | FR-K6 | S | Optional `transform.py` escape hatch for semantics templates cannot express. Such kernels are marked **trusted-only** and the UI asks before loading one from an untrusted folder. |
 | FR-K7 | S | Process kernels: an external program speaking the stdio protocol (§7.2) returns a geometry graph, a STEP file or a mesh. As built in M8: the manifest says `parser = "process"` and names the program in `[process] command` (with `{python}`, `{kernel}` and `{env:NAME}` fields) and what to install in `setup`; a kernel without a grammar may declare its highlighting in `[highlight]`. A process kernel from outside the bundled kernels runs only once the user trusts its folder (`gcad kernel trust`, or the studio's prompt); the trust is tied to a hash of the folder's files, so editing the program withdraws it. Bundled: `openscad` and `cadquery`. |
-| FR-K8 | C | Import of ISO 14977 EBNF and W3C EBNF grammars by conversion to Lark. |
+| FR-K8 | C | Import of ISO 14977 EBNF and W3C EBNF grammars by conversion to Lark. As built in M14 for Wirth Syntax Notation (`gcad grammar import --notation wsn`), the notation of ISO 10303-11 and -21; used to check a hand-written grammar against a standard's own productions. |
+| FR-K9 | S | A kernel may name a semantic checker the engine provides (`checker` in `kernel.toml`): it reads the source after the grammar accepted it and adds diagnostics, for what a context-free grammar cannot decide. Its errors mean the source does not conform; they are reported, and `gcad eval` exits non-zero, but the model is still built. (M14: `iso10303-21`.) |
 
 Bundled kernels:
 
@@ -158,6 +162,8 @@ Bundled kernels:
 - **`csg`** (M): an S-expression language close to GCore, showing that a homoiconic language needs almost no rewrite rules: three, as built in M2. File extension `.gcsg`, because OpenSCAD already uses `.csg` for its CSG-tree export (FR-K7).
 - **`parts`** (added in M2 for AC-5): a declarative parts list, one solid per line, written only as `kernel.toml`, `grammar.lark` and `rewrite.toml`.
 - **`blockmesh`**: OpenFOAM's `blockMeshDict` (claimed by the file name `blockMeshDict` and the extension `.blockMeshDict`), the dictionary a CFD block mesh is made from, written only as a grammar, rewrite rules, a prelude and examples. It shows the solid the hex blocks occupy, each block a `name`d, `color`ed polyhedron per cell zone, in millimetres (OpenFOAM metres times `scale`, `convertToMeters` or `units [m|cm|mm|um|km]`). Read: `key value;` entries as defines, `$name`, `$a/b`, `$!a/b`, `$/a/b`, `-$name` and `#neg` as references, sub-dictionaries; `hex` blocks with OpenFOAM's vertex and face numbering and its inside-out check, named vertices and blocks, collapsed vertices on straight blocks; `arc` (mid point, `origin [factor]`, angle and axis), `polyLine` and `line` edges, a curved block's faces being the Coons patches of their edges, sampled at 7.5° per piece. Ignored, as mesh-only: cell counts, `simpleGrading`/`edgeGrading`, `boundary`, `patches`, `defaultPatch`, `mergePatchPairs`, `FoamFile`, `geometry`, `#remove`. Errors at their line: projections (`project` vertices, edges and faces), `spline`/`BSpline` and other edge types, `transform`, `#include*`, `#codeStream`, `#if`/`#ifeq`, `#inputMode`, `$:` and file macros, and any value computed by `#calc`, `#eval` or `${...}` where geometry uses it.
+
+- **`iso10303`** (M14, §5.5): ISO 10303-21 exchange files (`.stp`, `.step`, `.p21`), a Lark grammar of the exchange structure, 18 rewrite rules and a prelude that builds geometry from the instances, with the `iso10303-21` checker.
 
 ### 5.3 Geometry graph
 
@@ -172,8 +178,8 @@ The evaluator emits a JSON directed acyclic graph; identical sub-trees share one
 | 2D→3D | `linear_extrude(height, center)`, `rotate_extrude(angle)`; `twist`/`scale` on extrude is S |
 | 3D→2D | `section(plane)` M; `projection(view, hidden_lines)` S. As built in M4: `section(z)` cuts at height z (other planes: rotate the model first); `project` gives the outline seen from +z (no hidden lines); minscad's `projection(cut)` maps onto both, as in OpenSCAD. Both run on back-end M; back-end B reports them as not supported yet. |
 | Attributes | `color(rgba)`, `name`; `material` S |
-| Imported geometry | `import(format, sha256, bounds)` (added in M8): a STEP file or a mesh handed over by a process kernel, by content hash |
 | Document | `units` (default mm; also cm, m, in), metadata (title, author, revision) |
+| Import | `import(format, data, entity, bounds)`: geometry a back-end reads from content the graph keeps by its SHA-256 (`Graph.blobs`), so the hash covers it; `bounds` (x0 y0 z0 x1 y1 z1) is optional. As built in M14 for STEP read by back-end B (the whole file); back-end M uses back-end B's tessellation where it is installed. M8 adds the meshes a process kernel hands over (STL, OFF, 3MF), which back-end M reads directly and back-end B refuses (FR-B4). |
 
 FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stable SHA-256; the same model written in two kernels must yield the same hash once spans are stripped.
 
@@ -189,6 +195,21 @@ FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stab
 | FR-B7 | M | Back-end `auto` (the default, added in M3) uses B for formats that need exact geometry and M for mesh formats, so mesh exports keep Manifold's per-triangle provenance and speed. `--backend` overrides it. |
 | FR-B6 | S | `projection` with hidden-line removal on back-end B for 2D drawing views. |
 
+### 5.5 ISO 10303 parametric exchange (M14, proposed)
+
+The design, its decisions and its verification are in [docs/design/iso10303-kernel.md](design/iso10303-kernel.md); the status of every entity is in [docs/design/iso10303-coverage.tsv](design/iso10303-coverage.tsv).
+
+| ID | Pri | Requirement |
+|---|---|---|
+| FR-I1 | S | **Part 21 syntax.** The `iso10303` kernel's grammar implements the WSN of ISO 10303-21:2002 Tables 1 to 4, traced production by production, each deviation listed with its reason (design note §1.2); a test compares it with the WSN read from the user's copy of the standard. Edition 3 sections are out of scope. |
+| FR-I2 | S | **References.** Instance names may be used before they are defined; dangling, duplicate and cyclic references are errors at the instance. |
+| FR-I3 | S | **Reuse.** The Part 21 reader, the EXPRESS reader and interpreter, and the checker come from freecad-nxstyle, vendored unchanged with attribution. |
+| FR-I4 | S | **Conformance.** A file is checked against the long form of the application protocol its header names, when it is in the schema cache, else against the resource parts: header, form, and every WHERE, UNIQUE and global rule and INVERSE cardinality, with counts of rules evaluated, violated and not evaluated. A violation that is a documented contradiction in the standards is a warning that says so. No schema is in the repository: `gcad iso schema fetch` downloads the long forms ISO publishes; `gcad iso schema build` compiles the resource parts from the user's copies. |
+| FR-I5 | S | **Geometry.** ISO 10303-42 CSG primitives, booleans, half-spaces, replicas, extruded and revolved areas and 2D CSG; ISO 10303-111 round holes, plain pockets and bosses; ISO 10303-55 histories; ISO 10303-112 sketch commands that make regions; colours of whole solids. Explicit B-rep is read by back-end B. Everything else met in a model stops evaluation with a diagnostic naming the instance (FR-B4). |
+| FR-I6 | S | **Parameters.** ISO 10303-108 free-form assignments and equal-parameter constraints give bound attributes their values from ISO 13584-20 expressions; a slider on a parameter's value drives the model. |
+| FR-I7 | S | **Parametric export.** `step-parametric` writes the graph as ISO 10303-42 CSG in an ISO 10303-55 history, the program's numeric definitions as ISO 10303-108 parameters (FR-C10), under the AP242 long form; the kernel reads it back to the same graph hash. Written from the graph, with no back-end, so also in the web studio. What has no ISO 10303-42 form is refused with a diagnostic. |
+| FR-I8 | S | **Coverage.** A matrix generated from the schemas gives every entity of the AP242 long form and of the resource parts a status (supported, delegated to back-end B, refused with a diagnostic, out of scope) and a reason; a test fails on any entity without one, or a supported entity without a fixture. |
+
 ## 6. Functional requirements: user interface and CLI
 
 | ID | Pri | Requirement |
@@ -203,7 +224,7 @@ FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stab
 | FR-U8 | S | Sliders on numeric literals (D9): scrubbing rewrites the literal in the source and re-evaluates. As built in M5. |
 | FR-U9 | S | 2D view for 2D models and sections, with true-scale rulers. As built in M5: a top view with a millimetre grid and the extents in the stats card; no rulers yet. |
 | FR-U10 | C | Notebook documents (`.gcadnb`, JSON like `.ipynb`): cells, each bound to a kernel, sharing one scene; later a Jupyter kernel wrapper. |
-| FR-CLI1 | M | `gcad kernels`, `gcad eval <file> [--kernel k] [--dump gcore|graph]`, `gcad export <file> -f <fmt> -o <out> [--backend B|M] [--tol …]`, `gcad kernel check <dir>`, `gcad serve`. |
+| FR-CLI1 | M | `gcad kernels`, `gcad eval <file> [--kernel k] [--dump gcore|graph]`, `gcad export <file> -f <fmt> -o <out> [--backend B|M] [--tol …]`, `gcad kernel check <dir>`, `gcad serve`. As built in M14, also `gcad iso schema list|fetch|add|build`, `gcad iso check <file>` and `gcad grammar import --notation wsn`. |
 | FR-CLI2 | M | The CLI needs no display, GPU or browser; it is the reference path for tests and automation. Exit code 0 on success, non-zero on any error diagnostic. |
 
 ## 7. Protocols
@@ -226,7 +247,7 @@ As built in M8 (`gcad.kernels.process`; the module docstring is the reference):
 - `evaluate {source, file, folder, workdir, params} → {diagnostics, graph | step_path | mesh_path}`. `folder` is where the source file lives, so a language can find the files it includes.
 - A diagnostic is `{severity, message, line?, col?, end_line?, end_col?}`, 1-based.
 - `graph` is the canonical graph JSON (`gcad eval --dump graph`); node ids are recomputed and unknown ops refused.
-- `step_path` and `mesh_path` (STL, OFF or 3MF, mm) must name files inside `workdir`. They become one `import` node in the graph that carries the file's SHA-256; the bytes stay in a per-process store. Back-end B reads STEP exactly and refuses meshes (FR-B4); back-end M tessellates STEP through OpenCASCADE.
+- `step_path` and `mesh_path` (STL, OFF or 3MF, mm) must name files inside `workdir`. They become one `import` node (§5.3) whose `data` is the file's SHA-256; the graph carries the bytes (`Graph.blobs`). Back-end B reads STEP exactly and refuses meshes (FR-B4); back-end M tessellates STEP through OpenCASCADE.
 - The child may send `log {message, severity?}` notifications, and stray output lines are kept as info.
 - The program is started once and kept running between evaluations, because starting some languages costs seconds (importing CadQuery took 2 to 6 s). Starting has its own 60 s allowance; the FR-C6 wall-time limit applies to each `evaluate`. When the limit passes, a newer evaluation replaces it, or the program fails, the program and everything it started are ended, and the next evaluation starts a new one.
 - No memory limit is enforced yet.
@@ -241,6 +262,7 @@ As built in M8 (`gcad.kernels.process`; the module docstring is the reference):
 | Format | Standard / version | Ext | Source | Implementation | Pri | Verified by |
 |---|---|---|---|---|---|---|
 | STEP | ISO 10303-21, AP214 default, AP242 option | `.step .stp` | B-rep | OCCT `STEPCAFControl_Writer` (product name and colour via XCAF) | M | Re-read with OCCT; one valid solid per body; volume equals analytic value within 1e-6 relative; units read back as mm. As built: also parsed by `steputils` (an independent Part 21 parser) |
+| STEP parametric | ISO 10303-21; ISO 10303-42 CSG, -55 history, -108 parameters, ISO 13584-20 expressions; AP242 long form | `.stp .step` | graph | Own writer (`gcad.iso10303.writer`), layout from freecad-nxstyle; `-f step-parametric` | S | As built (M14): read back by the `iso10303` kernel to the same graph hash; AP242 long form with every rule evaluated; STEPcode `p21read`; FreeCAD with freecad-nxstyle's importer (AC-23) |
 | IGES | IGES 5.3 | `.iges .igs` | B-rep | OCCT `IGESControl_Writer` (B-rep mode, entity 186); global-section dates patched to the export time | M | Re-read with OCCT; volume as STEP |
 | STL | 3D Systems STL, binary and ASCII | `.stl` | mesh | Own writer, explicit little-endian | M | `trimesh` re-read; watertight; triangle count matches header; volume within 0.5 % of B-rep volume |
 | OBJ | Wavefront OBJ + MTL for colour | `.obj .mtl` | mesh | Own writer | M | `trimesh` re-read; face and vertex counts |
@@ -319,6 +341,15 @@ v0.2 (proposed, §12.2):
 19. **AC-19 More formats:** PLY, OFF and 3MF re-read with trimesh as in AC-3 and are byte-reproducible as in AC-7. A tetrahedral UNV re-reads with Gmsh with a total element volume within 0.5 % of AC-2. The DWG plug-in, where a converter is installed, converts DWG back to DXF with every vertex equal to the source; this check is local only.
 20. **AC-20 Release on PyPI:** `pip install gcad-studio==0.2.0` from PyPI into a clean environment works on all six CI runners and `gcad --version` prints 0.2.0 (NFR-4).
 
+ISO 10303 parametric exchange (M14, proposed, §5.5):
+
+21. **AC-21 Grammar and coverage:** `gcad kernel check` passes for `iso10303`; the coverage matrix test passes with no entity of the AP242 long form or the resource parts unstatused and every supported entity in a fixture; locally, with the user's copy of ISO 10303-21, the kernel's grammar and the standard's WSN accept and reject the same sentences.
+22. **AC-22 AC-2 in Part 42:** the AC-2 part written as ISO 10303-42 CSG with an ISO 10303-108 parameter for the hole diameter exports to B-rep STEP that re-reads in OpenCASCADE with volume 12,000 − 160π mm³ within 1e-6 relative; with the parameter at 10 mm, 12,000 − 250π.
+23. **AC-23 Independent proof:** the parametric files GCAD writes pass the AP242 long form with every rule evaluated (0 errors, 0 not evaluated; warnings only for documented contradictions), and freecad-nxstyle's own checker gives the same counts; STEPcode `p21read` accepts those it does not crash on; FreeCAD with freecad-nxstyle's importer rebuilds the AC-2 file with the same volume and parameter.
+24. **AC-24 Foreign files:** B-rep STEP from OpenCASCADE (AP214 and AP242) opens with the same volume, and parametric STEP from freecad-nxstyle opens with its parameters driving the model.
+25. **AC-25 Negative controls:** a syntax error, a dangling `#n`, a duplicate `#n`, a reference cycle, a WHERE-rule violation, an entity outside the schema and an unsupported ISO 10303-111 feature each give their exact diagnostic at the instance.
+26. **AC-26 Round trip and determinism:** every bundled minscad, csg and parts example exports as parametric STEP and reads back to the same graph hash, or is refused with its stated reason; two processes write byte-identical files.
+
 ## 11. Decisions to confirm before development
 
 1. **Stack:** Python core + local browser UI (recommended, §4) versus C++/Qt as discussed in 2018.
@@ -376,6 +407,15 @@ For review:
 2. **Process kernels are not a sandbox.** They run the user's code with the user's rights. The plan relies on consent, a separate working folder and the time limit.
 3. **M13 needs the owner's two steps** on pypi.org and in the repository settings.
 4. **Not in v0.2:** assemblies and PMI, fillets and chamfers, CAM, CAE decks, the node editor, an LSP bridge, ACIS, PHIGS and 3D PDF.
+
+### 12.3 ISO 10303 (proposed 2026-10-27, awaiting approval)
+
+Alongside v0.2 and independent of it; each lands as one pull request.
+
+| Milestone | Content | Exit check |
+|---|---|---|
+| M14 | **ISO 10303 parametric exchange** (§5.5): the `iso10303` kernel, the `iso10303-21` checker, the engine features it needs (FR-C8 to FR-C10, FR-K8, FR-K9, the `import` op), the parametric STEP writer and the coverage matrix. | AC-21 to AC-26 |
+| M15 | **PMI viewing.** A STEP file's semantic PMI (datums, geometric tolerances, dimensions with their tolerances) listed in the console and attached to its faces, and its graphical PMI (annotation curves and tessellated annotations, callouts) drawn in the viewer in their presentation planes; from freecad-nxstyle's `pmi.py`, `gdt.py` and `ap242.py`. | To be written with M15 |
 
 ## 13. Glossary
 

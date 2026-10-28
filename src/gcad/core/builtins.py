@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Callable
 
@@ -13,13 +14,16 @@ from gcad.core.evaluator import (
     CallCtx,
     Closure,
     Env,
+    Record,
+    Thunk,
     flatten_shapes,
     is_shape_list,
     truthy,
     type_name,
 )
 from gcad.core.graph import ArgValue, Node, empty, rotation_axis
-from gcad.core.sexpr import format_number
+from gcad.core.sexpr import Num, SList, Str, Sym, format_number
+from gcad.core.trace import traced_call
 from gcad.diagnostics import GcadError, Span
 
 HINTS = ("$fn", "$fa", "$fs")
@@ -508,7 +512,7 @@ def _numeric(
         result = float(fn(x))
         if not math.isfinite(result):
             raise GcadError(f"'{name}' of {format_number(x)} is not finite", ctx.span)
-        return result
+        return traced_call(name, x, result)
 
     return call
 
@@ -729,6 +733,113 @@ def b_assert(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Non
     return None
 
 
+def b_warn(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
+    """(warn message...): a warning at the call, or at the record `at` attributes it to."""
+    ctx.ev.warn("".join(show(a) for a in args), ctx.span)
+    return None
+
+
+def b_info(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
+    """(info message...): a note at the call, or at the record `at` attributes it to."""
+    ctx.ev.info("".join(show(a) for a in args), ctx.span)
+    return None
+
+
+def b_fail(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
+    """(fail message...): stop with this error."""
+    raise GcadError("".join(show(a) for a in args), ctx.span)
+
+
+def b_record(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Record:
+    """(record item...): a list that remembers where it was written (FR-C9)."""
+    if kwargs:
+        raise GcadError("'record' takes no named arguments", ctx.span)
+    return Record(list(args), ctx.span)
+
+
+def b_resolve(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> object:
+    """(resolve name [default]): the value a name has where resolve is called, the name given
+    as a string; default (undef) when it has none. Lets data choose a function."""
+    if len(args) not in (1, 2) or not isinstance(args[0], str):
+        raise GcadError("'resolve' takes a name as a string and an optional default", ctx.span)
+    found, value = ctx.env.lookup(args[0])
+    if not found:
+        return args[1] if len(args) == 2 else None
+    if isinstance(value, Thunk):
+        return ctx.ev.force(value, ctx.span)
+    return value
+
+
+def b_contains(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> bool:
+    """(contains list value): whether the list holds an element equal to value."""
+    if len(args) != 2 or not isinstance(args[0], list):
+        raise GcadError("'contains' takes a list and a value", ctx.span)
+    return any(_equal(x, args[1]) for x in args[0])
+
+
+def b_apply(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> object:
+    """(apply f list): call f with the list's items as its positional arguments."""
+    if len(args) != 2 or not isinstance(args[1], list):
+        raise GcadError("'apply' takes a function and a list of arguments", ctx.span)
+    return ctx.ev.apply(args[0], list(args[1]), dict(kwargs), ctx.span, ctx.env)
+
+
+def _text_fn(name: str, n: int, fn: Callable[..., object]) -> BuiltinFn:
+    def call(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> object:
+        if len(args) != n or not all(isinstance(a, str) for a in args):
+            raise GcadError(f"'{name}' takes {n} string{'s' if n > 1 else ''}", ctx.span)
+        return fn(*args)
+
+    return call
+
+
+def _parse_number(text: str) -> float | None:
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def b_parse_value(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> object:
+    """(parse_value text): the value of a GCore literal (number, string, true, false, undef, or a
+    vector of these), undef when text is not one. Nothing is evaluated."""
+    from gcad.core.sexpr import read
+
+    if len(args) != 1 or not isinstance(args[0], str):
+        raise GcadError("'parse_value' takes a string", ctx.span)
+
+    def literal(expr: object) -> object:
+        if isinstance(expr, Num | Str):
+            return expr.value
+        if isinstance(expr, Sym) and expr.name in ("true", "false", "undef"):
+            return {"true": True, "false": False, "undef": None}[expr.name]
+        if isinstance(expr, SList) and expr.bracket == "[":
+            return [literal(i) for i in expr.items]
+        raise ValueError(expr)
+
+    try:
+        forms = read(args[0], "<parse_value>")
+        return literal(forms[0]) if len(forms) == 1 else None
+    except (GcadError, ValueError):
+        return None
+
+
+def b_import_source(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Node:
+    """(import_source format [entity]): geometry the source file itself carries, in a format a
+    back-end reads (step), optionally one entity of it. The graph keeps the source by its
+    SHA-256, so the node changes when the file does."""
+    v, _ = bind("import_source", [("format", None), ("entity", 0.0)], args, kwargs, ctx)
+    fmt = v["format"]
+    if fmt not in ("step",):
+        raise GcadError("import_source reads the format 'step'", ctx.span)
+    entity = as_num(v["entity"], "entity", ctx.span)
+    data = ctx.ev.source.encode("utf-8")
+    digest = hashlib.sha256(data).hexdigest()
+    ctx.ev.blobs[digest] = data
+    return ctx.ev.node("import", {"format": fmt, "data": digest, "entity": entity}, [], ctx.span, 3)
+
+
 def _is(name: str, test: Callable[[object], bool]) -> BuiltinFn:
     def call(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> bool:
         if len(args) != 1:
@@ -805,6 +916,21 @@ def global_env() -> Env:
         "str": b_str,
         "echo": b_echo,
         "assert": b_assert,
+        "warn": b_warn,
+        "info": b_info,
+        "fail": b_fail,
+        "record": b_record,
+        "resolve": b_resolve,
+        "apply": b_apply,
+        "contains": b_contains,
+        "split": _text_fn("split", 2, lambda s, sep: s.split(sep)),
+        "upper": _text_fn("upper", 1, str.upper),
+        "lower": _text_fn("lower", 1, str.lower),
+        "starts_with": _text_fn("starts_with", 2, str.startswith),
+        "parse_number": _text_fn("parse_number", 1, _parse_number),
+        "parse_value": b_parse_value,
+        "is_record": _is("is_record", lambda v: isinstance(v, Record)),
+        "import_source": b_import_source,
         "is_undef": _is("is_undef", lambda v: v is None),
         "is_num": _is("is_num", lambda v: isinstance(v, float) and not isinstance(v, bool)),
         "is_bool": _is("is_bool", lambda v: isinstance(v, bool)),

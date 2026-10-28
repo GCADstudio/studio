@@ -395,9 +395,10 @@ function downloadFile() {
 
 function uploadFile() {
   const input = $("#upload-input");
+  // .exp: an EXPRESS schema, kept to check ISO 10303 files against (SPEC FR-I4).
   // `accept` can list extensions but not file names, so a kernel that claims names lifts the filter.
   const kernels = [...state.kernels.values()];
-  input.accept = kernels.some((k) => k.filenames?.length) ? "" : kernels.flatMap((k) => k.extensions).join(",");
+  input.accept = kernels.some((k) => k.filenames?.length) ? "" : [...kernels.flatMap((k) => k.extensions), ".exp"].join(",");
   input.value = ""; // choosing the same file again still counts as a change
   input.click();
 }
@@ -407,6 +408,10 @@ $("#upload-input").addEventListener("change", async (e) => {
   if (!file) return;
   try {
     const saved = await rpc("file/save", { path: file.name, text: await file.text() });
+    if (saved.schemas) {
+      toast(`Schema kept for checking STEP files: ${saved.schemas.join(", ")}`);
+      return;
+    }
     await openFile(saved.path);
     toast(`Uploaded ${saved.name}`);
   } catch (error) {
@@ -428,9 +433,10 @@ const GROUPS = [
   { needs: "brep", title: "Exact solid", note: "B-rep through OpenCASCADE, for other CAD systems" },
   { needs: "mesh", title: "Mesh", note: "triangles, for printing, rendering and simulation" },
   { needs: "2d", title: "Drawing", note: "1:1 outlines in millimetres, for cutting and plotting" },
+  { needs: "graph", title: "Parametric", note: "the construction and its parameters, for other CAD systems" },
 ];
 const DESCRIPTIONS = {
-  step: "ISO 10303, AP214/AP242", iges: "IGES 5.3 solid", stl: "3D printing", obj: "Wavefront, with colours",
+  step: "ISO 10303, AP214/AP242", "step-parametric": "ISO 10303 CSG + parameters", iges: "IGES 5.3 solid", stl: "3D printing", obj: "Wavefront, with colours",
   glb: "glTF 2.0, web and AR", x3d: "X3D 3.3", vrml: "VRML97", dae: "COLLADA 1.4.1", unv: "FE surface mesh",
   dxf: "CAD drawing", svg: "vector graphics", pdf: "print at 1:1", eps: "PostScript", cgm: "ISO 8632 metafile",
 };
@@ -465,7 +471,7 @@ async function openExport() {
       let reason = f.reason;
       if (!reason && !dim) reason = "no model";
       else if (!reason && group.needs === "2d" && dim !== 2) reason = "needs a 2D model: use projection() or section";
-      else if (!reason && group.needs !== "2d" && dim === 2) reason = "needs a 3D model: extrude the drawing";
+      else if (!reason && group.needs !== "2d" && group.needs !== "graph" && dim === 2) reason = "needs a 3D model: extrude the drawing";
       button.disabled = Boolean(reason);
       button.title = reason || f.name;
       button.addEventListener("click", () => runExport(f, button));

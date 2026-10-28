@@ -8,6 +8,7 @@ GCAD_CADQUERY_PYTHON.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import math
 import os
@@ -23,7 +24,6 @@ import pytest
 
 from gcad.backends import available_backends, get_backend
 from gcad.cli import main
-from gcad.core import blobs
 from gcad.core.evaluator import Limits
 from gcad.core.graph import graph_from_json
 from gcad.diagnostics import GcadError
@@ -228,11 +228,15 @@ def test_mesh_readers_agree(tmp_path: Path) -> None:
         assert mesh.volume == pytest.approx(reference.volume, rel=1e-6), fmt
 
 
-def test_blobs_are_content_addressed() -> None:
-    digest = blobs.put(b"solid")
-    assert blobs.get(digest) == b"solid" and len(digest) == 64
-    with pytest.raises(GcadError, match="no longer loaded"):
-        blobs.get("0" * 64)
+def test_imported_files_travel_in_the_graph(echo: Kernel) -> None:
+    """The graph carries the file under its SHA-256, so a graph realizes on its own."""
+    graph = evaluate_source("mesh", "a.echo", echo).result.graph
+    assert graph is not None
+    digest = graph.root.arg("data")
+    assert isinstance(digest, str) and hashlib.sha256(graph.blobs[digest]).hexdigest() == digest
+    graph.blobs.clear()
+    with pytest.raises(GcadError, match="not in the graph"):
+        get_backend("manifold").realize(graph)
 
 
 # ---------- AC-13: OpenSCAD, where it is installed ----------

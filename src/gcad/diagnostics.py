@@ -40,17 +40,23 @@ class Diagnostic:
     severity: Severity
     message: str
     span: Span | None = None
+    #: "check" for a kernel's semantic checker (FR-K9): its errors say the file does not conform,
+    #: and are reported, but do not stop the model from being built
+    origin: str = ""
 
     def __str__(self) -> str:
         where = f"{self.span}: " if self.span else ""
         return f"{where}{self.severity.value}: {self.message}"
 
     def to_json(self) -> dict[str, object]:
-        return {
+        out: dict[str, object] = {
             "severity": self.severity.value,
             "message": self.message,
             "span": self.span.to_json() if self.span else None,
         }
+        if self.origin:
+            out["origin"] = self.origin
+        return out
 
 
 class GcadError(Exception):

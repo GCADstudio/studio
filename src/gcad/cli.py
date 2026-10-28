@@ -67,7 +67,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
     graph = evaluated.result.graph
     if args.dump == "gcore":
         print("\n".join(to_text(f) for f in evaluated.forms))
-    if failed or graph is None:
+    # A file that does not conform (a semantic checker's errors) still has its model.
+    if not evaluated.result.ok or graph is None:
         return 1
     if args.dump == "graph":
         print(json.dumps(graph.to_json(spans=True), indent=2, sort_keys=True))
@@ -76,10 +77,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
     elif args.dump == "summary":
         nodes = graph.nodes()
         print(
-            f"ok: kernel {evaluated.kernel.id}, {graph.root.dim}D model, "
-            f"{len(nodes)} distinct nodes, graph {graph.hash()[:16]}"
+            f"{'ok' if not failed else 'built, not conformant'}: kernel {evaluated.kernel.id}, "
+            f"{graph.root.dim}D model, {len(nodes)} distinct nodes, graph {graph.hash()[:16]}"
         )
-    return 0
+    return 1 if failed else 0
 
 
 def cmd_export(args: argparse.Namespace) -> int:
@@ -178,6 +179,56 @@ def cmd_kernel_describe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_iso_schema(args: argparse.Namespace) -> int:
+    """FR-I4: the EXPRESS schemas ISO 10303-21 files are checked against, kept in a cache."""
+    from gcad.iso10303 import schemas
+
+    if args.action == "list":
+        print(f"cache: {schemas.schema_dir()}")
+        for name in schemas.cached():
+            print(f"  {name}")
+        if not schemas.cached():
+            print("  (empty: gcad iso schema fetch AP242, or gcad iso schema build)")
+        return 0
+    if args.action == "fetch":
+        made = schemas.fetch(args.what)
+    elif args.action == "add":
+        made = schemas.add(Path(args.what))
+    else:
+        parts = [p for p in args.part or []]
+        made = [(schemas.build(parts, args.cor or [], args.exp or []).stem, 0, None)]
+    for name, count, old in made:
+        extra = f", replacing {old}" if old else ""
+        print(f"{name}: {count or 'compiled'} entities{extra}")
+    return 0
+
+
+def cmd_iso_check(args: argparse.Namespace) -> int:
+    """FR-I4: header, form and every rule, as `gcad eval` reports them, but with no limit."""
+    from gcad.iso10303.check import report
+
+    path = Path(args.file)
+    text = path.read_text(encoding="latin-1")
+    result = report(text, str(path), rules=True)
+    failed = print_diagnostics(result.diagnostics)
+    print(
+        f"{path.name}: checked against {result.schema or 'no schema'}; rules: {result.evaluated} "
+        f"evaluated, {result.violated} violated, {result.unevaluated} not evaluated"
+    )
+    return 1 if failed else 0
+
+
+def cmd_grammar_import(args: argparse.Namespace) -> int:
+    """FR-K8: a grammar written in another notation, as Lark (Wirth Syntax Notation for now)."""
+    from gcad.kernels.wsn import parse
+
+    grammar = parse(Path(args.file).read_text(encoding="utf-8"))
+    for note in grammar.notes:
+        print(f"warning: {note}", file=sys.stderr)
+    print(grammar.to_lark(args.start), end="")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """FR-U1: the local studio on 127.0.0.1, a random port and a session token."""
     import urllib.parse
@@ -251,6 +302,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=0, help="port (default: a free one)")
     p.add_argument("--no-browser", action="store_true", help="do not open a browser")
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("iso", help="ISO 10303 (STEP): schemas and conformance checks")
+    isub = p.add_subparsers(dest="iso_command", required=True)
+    s = isub.add_parser("schema", help="the EXPRESS schemas files are checked against")
+    s.add_argument("action", choices=["list", "fetch", "add", "build"])
+    s.add_argument("what", nargs="?", help="fetch: AP242, AP214, AP203 or AP203E2; add: a file")
+    s.add_argument(
+        "--part", action="append", help="build: PART=your copy (PDF or text), e.g. 42=p42.pdf"
+    )
+    s.add_argument("--cor", action="append", help="build: PART=a corrigendum, e.g. 108=cor1.pdf")
+    s.add_argument("--exp", action="append", help="build: more EXPRESS to add")
+    s.set_defaults(func=cmd_iso_schema)
+    s = isub.add_parser("check", help="check a STEP file: header, schema, every rule")
+    s.add_argument("file")
+    s.set_defaults(func=cmd_iso_check)
+
+    p = sub.add_parser("grammar", help="grammar notations")
+    gsub = p.add_subparsers(dest="grammar_command", required=True)
+    g = gsub.add_parser("import", help="convert a grammar to Lark (FR-K8)")
+    g.add_argument("file")
+    g.add_argument("--notation", choices=["wsn"], required=True)
+    g.add_argument("--start", required=True, help="the production a sentence starts from")
+    g.set_defaults(func=cmd_grammar_import)
 
     p = sub.add_parser("kernel", help="kernel authoring tools")
     ksub = p.add_subparsers(dest="kernel_command", required=True)

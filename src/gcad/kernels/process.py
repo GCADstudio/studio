@@ -23,6 +23,7 @@ ends it the same way. Starting the program has its own, longer allowance.
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import queue
@@ -38,7 +39,6 @@ from pathlib import Path
 from typing import Any
 
 from gcad import __version__
-from gcad.core import blobs
 from gcad.core.evaluator import EvalResult, Limits
 from gcad.core.graph import ArgValue, Graph, graph_from_json, make_node
 from gcad.diagnostics import Diagnostic, GcadError, Severity, Span
@@ -350,8 +350,7 @@ def _geometry(result: dict[str, Any], workdir: Path) -> Graph | None:
         except ValueError as exc:
             raise GcadError(f"the kernel program's graph is not valid: {exc}") from None
     if result.get("step_path") is not None:
-        data = _inside(workdir, result["step_path"]).read_bytes()
-        return Graph(make_node("import", {"format": "step", "sha256": blobs.put(data)}))
+        return _imported("step", _inside(workdir, result["step_path"]).read_bytes())
     if result.get("mesh_path") is not None:
         path = _inside(workdir, result["mesh_path"])
         fmt = str(result.get("mesh_format") or path.suffix.lstrip(".")).lower()
@@ -362,9 +361,18 @@ def _geometry(result: dict[str, Any], workdir: Path) -> Graph | None:
         if not len(tris):
             raise GcadError("the kernel program's mesh is empty")
         bounds = tuple(float(v) for v in (*vertices.min(axis=0), *vertices.max(axis=0)))
-        args: dict[str, ArgValue] = {"format": fmt, "sha256": blobs.put(data), "bounds": bounds}
-        return Graph(make_node("import", args))
+        return _imported(fmt, data, bounds)
     return None
+
+
+def _imported(fmt: str, data: bytes, bounds: tuple[float, ...] | None = None) -> Graph:
+    """One `import` node; the graph carries the bytes under their SHA-256, as for a source
+    that is itself geometry (core.builtins import_source)."""
+    digest = hashlib.sha256(data).hexdigest()
+    args: dict[str, ArgValue] = {"format": fmt, "data": digest, "entity": 0.0}
+    if bounds is not None:
+        args["bounds"] = bounds
+    return Graph(make_node("import", args), blobs={digest: data})
 
 
 def evaluate_process(

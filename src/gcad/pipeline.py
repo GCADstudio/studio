@@ -9,7 +9,7 @@ from gcad.backends import select_backend
 from gcad.core.evaluator import EvalResult, Limits, evaluate
 from gcad.core.sexpr import Expr
 from gcad.diagnostics import GcadError
-from gcad.exporters import ExportJob, export, format_for
+from gcad.exporters import ExportJob, GraphOnly, export, format_for
 from gcad.kernels import Kernel, kernel_for
 
 
@@ -26,6 +26,7 @@ def evaluate_source(
     kernel: Kernel,
     limits: Limits | None = None,
     folder: Path | None = None,
+    trace: bool = False,
 ) -> Evaluated:
     """`folder` is where the source lives, for kernels whose language includes other files."""
     if kernel.is_process:
@@ -38,18 +39,23 @@ def evaluate_source(
     except GcadError as exc:
         return Evaluated(kernel, [], EvalResult(None, [exc.diagnostic]))
     metadata = {"title": Path(file).stem, "source": Path(file).name, "kernel": kernel.id}
-    return Evaluated(kernel, forms, evaluate(forms, limits, metadata, prelude))
+    result = evaluate(forms, limits, metadata, prelude, source, trace)
+    try:
+        result.diagnostics.extend(kernel.check(source, file))
+    except GcadError as exc:
+        result.diagnostics.append(exc.diagnostic)
+    return Evaluated(kernel, forms, result)
 
 
 def evaluate_file(
-    path: Path, kernel_id: str | None = None, limits: Limits | None = None
+    path: Path, kernel_id: str | None = None, limits: Limits | None = None, trace: bool = False
 ) -> Evaluated:
     kernel = kernel_for(path, kernel_id)
     try:
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise GcadError(f"cannot read {path}: {exc.strerror}") from None
-    return evaluate_source(source, str(path), kernel, limits)
+    return evaluate_source(source, str(path), kernel, limits, trace=trace)
 
 
 @dataclass
@@ -75,10 +81,17 @@ def export_file(
     fmt = format_for(out, fmt_id)
     if not fmt.available:
         raise GcadError(f"{fmt.name} export is specified but arrives in milestone {fmt.milestone}")
-    evaluated = evaluate_file(path, kernel_id)
+    evaluated = evaluate_file(path, kernel_id, trace=fmt.traced)
     graph = evaluated.result.graph
     if not evaluated.result.ok or graph is None:
         return evaluated, None
+    if fmt.needs == "graph":
+        files = export(
+            ExportJob(GraphOnly(graph.root.dim), graph, out, dict(options or {})),  # type: ignore[arg-type]
+            fmt,
+            frozenset({"graph"}),
+        )
+        return evaluated, ExportReport(files, fmt.name, "none", f"{len(graph.nodes())} graph nodes")
     backend = select_backend(backend_name, fmt.needs)
     model = backend.realize(graph, tolerance)
     if not model.is_valid():

@@ -15,11 +15,16 @@ built-ins and the user's program, for renames such as OpenSCAD's cube -> box.
 
 A process kernel runs a program with the user's rights, so one from outside the bundled
 kernels is used only once the user has trusted its folder (FR-K6, FR-K7).
+
+`checker` in kernel.toml names a semantic checker the engine provides (FR-K9). It reads the
+source after the grammar has accepted it and adds diagnostics: what a context-free grammar
+cannot decide, such as an ISO 10303-21 file against its EXPRESS schemas.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import sys
@@ -28,12 +33,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gcad.core.sexpr import Expr, SList, Sym, read
-from gcad.diagnostics import GcadError
+from gcad.diagnostics import Diagnostic, GcadError
 from gcad.kernels.grammar import GrammarKernel, load_grammar_kernel
 
 BUNDLED = Path(__file__).parent
 PARSERS = ("gcore", "earley", "lalr", "process")
 REQUIRED = ("id", "name", "version", "parser")
+#: semantic checkers a kernel may name (FR-K9): module path of a check(source, file) function
+CHECKERS = {"iso10303-21": "gcad.iso10303.check"}
 
 
 @dataclass(frozen=True)
@@ -49,6 +56,7 @@ class Kernel:
     #: exact, case-sensitive file names the kernel claims, for files without an extension
     filenames: tuple[str, ...] = ()
     start: str = "start"
+    checker: str = ""
     #: process kernels: the program to start, with {python}, {kernel} and {env:NAME} fields
     command: tuple[str, ...] = ()
     #: process kernels: what to install or set when the program cannot be found
@@ -87,6 +95,14 @@ class Kernel:
         if self.is_process:
             raise GcadError(f"kernel '{self.id}' is a program; it returns geometry, not GCore")
         return self.grammar().to_gcore(source, file)
+
+    def check(self, source: str, file: str) -> list[Diagnostic]:
+        """The diagnostics of the kernel's semantic checker, if it names one."""
+        if not self.checker:
+            return []
+        module = importlib.import_module(CHECKERS[self.checker])
+        diagnostics: list[Diagnostic] = module.check(source, file)
+        return diagnostics
 
     def prelude(self) -> list[Expr]:
         path = self.path / "prelude.gcore"
@@ -156,6 +172,8 @@ def load_kernel(folder: Path) -> Kernel:
         raise GcadError(f"{manifest}: missing {', '.join(missing)}")
     if data["parser"] not in PARSERS:
         raise GcadError(f"{manifest}: parser must be one of {', '.join(PARSERS)}")
+    if data.get("checker", "") not in ("", *CHECKERS):
+        raise GcadError(f"{manifest}: checker must be one of {', '.join(CHECKERS)}")
     exts = data.get("extensions", [])
     if not isinstance(exts, list) or not all(
         isinstance(e, str) and e.startswith(".") for e in exts
@@ -188,6 +206,7 @@ def load_kernel(folder: Path) -> Kernel:
         description=str(data.get("description", "")),
         filenames=tuple(names),
         start=str(data.get("start", "start")),
+        checker=str(data.get("checker", "")),
         command=tuple(command or ()),
         setup=str(process.get("setup", "")) if isinstance(process, dict) else "",
         highlight=highlight,

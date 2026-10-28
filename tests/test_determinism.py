@@ -29,6 +29,8 @@ for fmt in FORMATS.values():
     elif fmt.needs == "brep":
         if occt:
             export_file(part, out / f"part{ext}")
+    elif fmt.needs == "graph":  # written from the graph: no back-end; its extension is shared
+        export_file(part, out / f"part-{fmt.id}{ext}", fmt.id)
     else:
         export_file(part, out / f"part-manifold{ext}", backend_name="manifold")
         if occt:
