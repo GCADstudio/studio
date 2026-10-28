@@ -1,7 +1,7 @@
 ISO-10303-21;
 HEADER;
 FILE_DESCRIPTION(('test_part_param: parametric model from test_part_param.gcsg'),'2;1');
-FILE_NAME('test_part_param','2026-10-24T00:00:00',(''),(''),'GCAD Studio 0.1.0','GCAD Studio','');
+FILE_NAME('test_part_param','2026-10-24T00:00:00',(''),(''),'GCAD Studio 0.2.0a1','GCAD Studio','');
 FILE_SCHEMA(('AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF'));
 ENDSEC;
 DATA;

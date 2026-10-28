@@ -161,6 +161,72 @@ class Graph:
         return hashlib.sha256(canonical_json(self.to_json(spans=False)).encode()).hexdigest()
 
 
+#: Every op a back-end understands. A graph read from outside (a process kernel) may use no other.
+OPS = frozenset(
+    {
+        *("box", "sphere", "cylinder", "polyhedron", "rect", "circle", "polygon"),
+        *("translate", "rotate", "scale", "mirror", "matrix"),
+        *("union", "difference", "intersection"),
+        *("linear_extrude", "rotate_extrude", "section", "project"),
+        *("color", "name", "import"),
+    }
+)
+
+
+def _arg_value(value: object, where: str) -> ArgValue:
+    if value is None or isinstance(value, bool | str):
+        return value
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, list):
+        return tuple(_arg_value(v, where) for v in value)
+    raise ValueError(f"{where}: unsupported argument value {value!r}")
+
+
+def graph_from_json(doc: Mapping[str, object], span: Span | None = None) -> Graph:
+    """Read the canonical graph JSON (the `gcad eval --dump graph` form). Node ids are
+    recomputed, so a graph cannot claim content it does not have. `span`, when given, is put
+    on every node: the geometry then links back to the whole source it came from."""
+    if doc.get("format") != "gcad-graph" or doc.get("version") != 1:
+        raise ValueError("not a gcad-graph version 1 document")
+    nodes = doc.get("nodes")
+    root_id = doc.get("root")
+    if not isinstance(nodes, dict) or not isinstance(root_id, str) or root_id not in nodes:
+        raise ValueError("graph has no nodes or no root")
+    built: dict[str, Node] = {}
+    visiting: set[str] = set()
+
+    def build(nid: str) -> Node:
+        if nid in built:
+            return built[nid]
+        if nid in visiting or nid not in nodes:
+            raise ValueError(f"node {nid}: missing or part of a cycle")
+        visiting.add(nid)
+        raw = nodes[nid]
+        if not isinstance(raw, dict):
+            raise ValueError(f"node {nid}: not an object")
+        op, dim = raw.get("op"), raw.get("dim")
+        if op not in OPS or dim not in (2, 3):
+            raise ValueError(f"node {nid}: unknown op {op!r} or dim {dim!r}")
+        args = raw.get("args") or {}
+        children = raw.get("children") or []
+        if not isinstance(args, dict) or not isinstance(children, list):
+            raise ValueError(f"node {nid}: args must be an object and children a list")
+        node = make_node(
+            str(op),
+            {str(k): _arg_value(v, f"node {nid}") for k, v in args.items()},
+            [build(str(c)) for c in children],
+            int(cast(int, dim)),
+            span,
+        )
+        visiting.discard(nid)
+        built[nid] = node
+        return node
+
+    units = doc.get("units", "mm")
+    return Graph(build(root_id), units=str(units))
+
+
 # --- transforms -----------------------------------------------------------------------------
 
 
@@ -296,6 +362,12 @@ def estimate_bounds(node: Node, memo: dict[str, Box | None] | None = None) -> Bo
         else:
             r = float(max(abs(child[0][0]), abs(child[1][0])))
             result = (np.array([-r, -r, child[0][1]]), np.array([r, r, child[1][1]]))
+    elif op == "import":
+        if node.arg("bounds") is None:
+            result = None
+        else:
+            lo_hi = node.vec("bounds")  # x0 y0 z0 x1 y1 z1
+            result = (np.array(lo_hi[:3]), np.array(lo_hi[3:]))
     elif op in ("section", "project"):
         child = _box_union([estimate_bounds(c, memo) for c in node.children])
         if child is None:

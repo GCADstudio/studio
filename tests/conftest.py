@@ -27,6 +27,16 @@ def error_of(source: str, limits: Limits | None = None) -> str:
     return next(str(d) for d in result.diagnostics if d.severity.value == "error")
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Tests never read or write the user's own GCAD Studio folder (kernels, trust)."""
+    folder = tmp_path_factory.mktemp("config")
+    monkeypatch.setenv("GCAD_CONFIG_DIR", str(folder))
+    return folder
+
+
 @pytest.fixture
 def examples() -> Path:
     return EXAMPLES

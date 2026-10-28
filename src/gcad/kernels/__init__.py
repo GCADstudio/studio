@@ -7,9 +7,14 @@ Parsers:
     gcore   the source is GCore S-expression text
     earley  grammar.lark (any context-free grammar) + rewrite.toml
     lalr    grammar.lark (LALR(1), faster) + rewrite.toml
+    process an external program speaking the stdio protocol (SPEC §7.2), named by the
+            manifest's [process] command; see gcad.kernels.process
 
 A kernel may also ship prelude.gcore: GCore definitions evaluated in a scope between the
 built-ins and the user's program, for renames such as OpenSCAD's cube -> box.
+
+A process kernel runs a program with the user's rights, so one from outside the bundled
+kernels is used only once the user has trusted its folder (FR-K6, FR-K7).
 
 `checker` in kernel.toml names a semantic checker the engine provides (FR-K9). It reads the
 source after the grammar has accepted it and adds diagnostics: what a context-free grammar
@@ -18,11 +23,13 @@ cannot decide, such as an ISO 10303-21 file against its EXPRESS schemas.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
 import os
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from gcad.core.sexpr import Expr, SList, Sym, read
@@ -30,8 +37,8 @@ from gcad.diagnostics import Diagnostic, GcadError
 from gcad.kernels.grammar import GrammarKernel, load_grammar_kernel
 
 BUNDLED = Path(__file__).parent
-PARSERS = ("gcore", "earley", "lalr")
-REQUIRED = ("id", "name", "version", "extensions", "parser")
+PARSERS = ("gcore", "earley", "lalr", "process")
+REQUIRED = ("id", "name", "version", "parser")
 #: semantic checkers a kernel may name (FR-K9): module path of a check(source, file) function
 CHECKERS = {"iso10303-21": "gcad.iso10303.check"}
 
@@ -50,15 +57,39 @@ class Kernel:
     comment: str
     path: Path
     description: str = ""
+    #: exact, case-sensitive file names the kernel claims, for files without an extension
+    filenames: tuple[str, ...] = ()
     start: str = "start"
     checker: str = ""
     #: seconds an evaluation may take when more than the engine's limit (FR-C6), for languages
     #: whose files are large data rather than programs; at most MAX_TIME_LIMIT
     time_limit: float = 0.0
+    #: process kernels: the program to start, with {python}, {kernel} and {env:NAME} fields
+    command: tuple[str, ...] = ()
+    #: process kernels: what to install or set when the program cannot be found
+    setup: str = ""
+    #: highlight classes for kernels without a grammar, in the shape describe() gives
+    highlight: dict[str, object] | None = field(default=None, compare=False, hash=False)
 
     @property
     def is_grammar(self) -> bool:
         return self.parser in ("earley", "lalr")
+
+    @property
+    def is_process(self) -> bool:
+        return self.parser == "process"
+
+    @property
+    def bundled(self) -> bool:
+        return self.path.resolve().is_relative_to(BUNDLED.resolve())
+
+    def matches(self, path: Path) -> int:
+        """How well `path` fits this kernel, 0 for not at all: the length of the longest
+        extension it ends with, or more than any extension can score for an exact file name."""
+        if path.name in self.filenames:
+            return len(path.name) + 1
+        name = path.name.lower()
+        return max((len(e) for e in self.extensions if name.endswith(e)), default=0)
 
     def grammar(self) -> GrammarKernel:
         if not self.is_grammar:
@@ -68,6 +99,8 @@ class Kernel:
     def to_gcore(self, source: str, file: str) -> list[Expr]:
         if self.parser == "gcore":
             return read(source, file)
+        if self.is_process:
+            raise GcadError(f"kernel '{self.id}' is a program; it returns geometry, not GCore")
         return self.grammar().to_gcore(source, file)
 
     def check(self, source: str, file: str) -> list[Diagnostic]:
@@ -90,11 +123,23 @@ class Kernel:
             "name": self.name,
             "version": self.version,
             "extensions": list(self.extensions),
+            "filenames": list(self.filenames),
             "parser": self.parser,
             "comment": self.comment,
         }
         if self.is_grammar:
             info["highlight"] = self.grammar().describe()
+        elif self.highlight is not None:
+            info["highlight"] = self.highlight
+        if self.is_process:
+            from gcad.kernels.process import unavailable_reason
+
+            info["process"] = True
+            info["available"] = (reason := unavailable_reason(self)) is None
+            if reason:
+                info["reason"] = reason
+            info["builtins"] = []
+            return info
         info["builtins"] = self.builtin_names()
         return info
 
@@ -118,7 +163,7 @@ class Kernel:
         folder = self.path / "examples"
         if not folder.is_dir():
             return []
-        return sorted(p for p in folder.iterdir() if p.suffix in self.extensions)
+        return sorted(p for p in folder.iterdir() if self.matches(p))
 
 
 def load_kernel(folder: Path) -> Kernel:
@@ -143,13 +188,27 @@ def load_kernel(folder: Path) -> Kernel:
         or not 0 <= time_limit <= MAX_TIME_LIMIT
     ):
         raise GcadError(f"{manifest}: time_limit must be seconds, at most {MAX_TIME_LIMIT}")
-    exts = data["extensions"]
-    if (
-        not isinstance(exts, list)
-        or not exts
-        or not all(isinstance(e, str) and e.startswith(".") for e in exts)
+    exts = data.get("extensions", [])
+    if not isinstance(exts, list) or not all(
+        isinstance(e, str) and e.startswith(".") for e in exts
     ):
         raise GcadError(f'{manifest}: extensions must be a list like [".ext"]')
+    names = data.get("filenames", [])
+    if not isinstance(names, list) or not all(
+        isinstance(n, str) and n and "/" not in n and "\\" not in n for n in names
+    ):
+        raise GcadError(f'{manifest}: filenames must be a list of file names like ["Name"]')
+    if not exts and not names:
+        raise GcadError(f"{manifest}: give extensions, filenames or both")
+    process = data.get("process", {})
+    command = process.get("command", []) if isinstance(process, dict) else None
+    if data["parser"] == "process" and (
+        not isinstance(command, list) or not command or not all(isinstance(c, str) for c in command)
+    ):
+        raise GcadError(f'{manifest}: a process kernel needs [process] command = ["program", ...]')
+    highlight = data.get("highlight")
+    if highlight is not None and not isinstance(highlight, dict):
+        raise GcadError(f"{manifest}: [highlight] must be a table")
     return Kernel(
         id=str(data["id"]),
         name=str(data["name"]),
@@ -159,20 +218,73 @@ def load_kernel(folder: Path) -> Kernel:
         comment=str(data.get("comment", "")),
         path=folder,
         description=str(data.get("description", "")),
+        filenames=tuple(names),
         start=str(data.get("start", "start")),
         checker=str(data.get("checker", "")),
         time_limit=float(time_limit),
+        command=tuple(command or ()),
+        setup=str(process.get("setup", "")) if isinstance(process, dict) else "",
+        highlight=highlight,
     )
 
 
-def user_kernel_dir() -> Path:
+def config_dir() -> Path:
+    """GCAD Studio's per-user folder; GCAD_CONFIG_DIR overrides it (tests use that)."""
+    if override := os.environ.get("GCAD_CONFIG_DIR"):
+        return Path(override)
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "gcad" / "kernels"
+    return base / "gcad"
+
+
+def user_kernel_dir() -> Path:
+    return config_dir() / "kernels"
+
+
+# --- trust for kernels that run a program (FR-K6, FR-K7) ------------------------------------
+
+
+def fingerprint(kernel: Kernel) -> str:
+    """SHA-256 over the kernel folder's files, examples aside: editing the program or the
+    manifest withdraws the trust given to the old version."""
+    digest = hashlib.sha256()
+    root = kernel.path.resolve()
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        rel = path.relative_to(root)
+        if rel.parts[0] in ("examples", "__pycache__"):
+            continue
+        digest.update(rel.as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def _trust_file() -> Path:
+    return config_dir() / "trusted-kernels.json"
+
+
+def _trusted() -> dict[str, str]:
+    try:
+        data = json.loads(_trust_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+
+def is_trusted(kernel: Kernel) -> bool:
+    if not kernel.is_process or kernel.bundled:
+        return True
+    return _trusted().get(str(kernel.path.resolve())) == fingerprint(kernel)
+
+
+def trust(kernel: Kernel) -> None:
+    entries = _trusted()
+    entries[str(kernel.path.resolve())] = fingerprint(kernel)
+    path = _trust_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(entries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def search_path() -> list[Path]:
@@ -203,8 +315,8 @@ def kernel_for(path: Path, kernel_id: str | None = None) -> Kernel:
         if kernel_id not in kernels:
             raise GcadError(f"no kernel '{kernel_id}' (see 'gcad kernels')")
         return kernels[kernel_id]
-    suffix = path.suffix.lower()
-    for kernel in kernels.values():
-        if suffix in kernel.extensions:
-            return kernel
-    raise GcadError(f"no kernel handles '{suffix}' files; pass --kernel")
+    best = max(kernels.values(), key=lambda k: k.matches(path), default=None)
+    if best is None or not best.matches(path):
+        what = f"'{path.suffix.lower()}' files" if path.suffix else f"files named '{path.name}'"
+        raise GcadError(f"no kernel handles {what}; pass --kernel")
+    return best

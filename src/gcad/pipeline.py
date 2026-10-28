@@ -21,8 +21,18 @@ class Evaluated:
 
 
 def evaluate_source(
-    source: str, file: str, kernel: Kernel, limits: Limits | None = None, trace: bool = False
+    source: str,
+    file: str,
+    kernel: Kernel,
+    limits: Limits | None = None,
+    folder: Path | None = None,
+    trace: bool = False,
 ) -> Evaluated:
+    """`folder` is where the source lives, for kernels whose language includes other files."""
+    if kernel.is_process:
+        from gcad.kernels.process import evaluate_process
+
+        return Evaluated(kernel, [], evaluate_process(kernel, source, file, limits, folder))
     try:
         forms = kernel.to_gcore(source, file)
         prelude = kernel.prelude()
@@ -48,7 +58,7 @@ def evaluate_file(
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise GcadError(f"cannot read {path}: {exc.strerror}") from None
-    return evaluate_source(source, str(path), kernel, limits, trace)
+    return evaluate_source(source, str(path), kernel, limits, trace=trace)
 
 
 @dataclass

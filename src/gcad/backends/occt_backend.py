@@ -380,6 +380,14 @@ class _Builder:
         return _transform(merged, m)
 
     def import_(self, node: Node) -> TopoDS_Shape:
+        fmt = str(node.arg("format"))
+        if fmt != "step":
+            # FR-B4: a solid made of triangles is never passed off as exact geometry.
+            raise GcadError(
+                f"this model is a {fmt.upper()} mesh, not exact geometry, so it cannot be "
+                "exported to STEP or IGES; choose a mesh format",
+                node.span,
+            )
         digest = str(node.arg("data"))
         if digest not in self.blobs:
             raise GcadError("the data this import reads is not in the graph", node.span)

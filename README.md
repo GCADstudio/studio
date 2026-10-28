@@ -32,7 +32,7 @@ python -m http.server -d site 8000       # then open http://127.0.0.1:8000
 
 ## Status
 
-Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-delivery-plan) are done. What changed is in [CHANGELOG.md](CHANGELOG.md).
+Pre-alpha, version 0.2.0a1, a pre-release: milestones M0 to M8 and M14 of [the plan](docs/SPEC.md#12-delivery-plan) are done; M9 to M13 are next. What changed is in [CHANGELOG.md](CHANGELOG.md).
 
 | Works now |
 |---|
@@ -40,6 +40,9 @@ Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-deli
 | GCore language and evaluator with source spans, limits and diagnostics |
 | Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python |
 | Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) |
+| Kernel `elmergrid` (`.grd`): ElmerGrid's structured-mesh format from [Elmer FEM](https://www.elmerfem.org), MATC expressions included, one solid or region per material; written only as grammar, rewrite rules and a GCore prelude, and checked against ElmerGrid on 441 of the 531 distinct `.grd` files in Elmer's sources |
+| Kernel `blockmesh` (OpenFOAM's `system/blockMeshDict`): the solid of a CFD block mesh, one coloured part per zone, in mm |
+| Process kernels: any language with a program of its own; bundled `openscad` (`.scad`, your installed OpenSCAD) and `cadquery` (`.cq.py`, CadQuery in its own environment) |
 | Exact B-rep back-end on [OpenCASCADE](https://dev.opencascade.org); mesh back-end on [Manifold](https://github.com/elalish/manifold); both CPU only |
 | 3D export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV |
 | 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM |
@@ -76,7 +79,7 @@ Python 3.11 or newer on Windows, macOS or Linux, x86_64 or arm64. No compiler or
 From a release, with the wheel from [GitHub Releases](https://github.com/GCADstudio/studio/releases):
 
 ```bash
-pip install gcad_studio-0.1.0-py3-none-any.whl
+pip install gcad_studio-0.2.0a1-py3-none-any.whl
 ```
 
 From a clone, for development:
@@ -145,6 +148,20 @@ A kernel is a folder: `kernel.toml`, a Lark grammar `grammar.lark`, and `rewrite
 ```bash
 gcad kernel check path/to/kernel        # grammar, rewrite coverage, examples
 gcad kernel describe path/to/kernel     # keywords and token classes for an editor
+```
+
+A language that already has a program of its own becomes a **process kernel**: the manifest says `parser = "process"` and names the program under `[process] command`. The program answers a small JSON-RPC protocol on stdin/stdout and hands back a geometry graph, a STEP file or a mesh ([SPEC §7.2](docs/SPEC.md#72-server--process-kernel-s)). Such a kernel runs a program with your rights, so one from outside GCAD Studio runs only after you trust its folder:
+
+```bash
+gcad kernel trust path/to/kernel        # the studio asks the same question on first use
+```
+
+Two process kernels come bundled. **`openscad`** opens `.scad` files with the OpenSCAD you have installed, on PATH, in its usual folder, or named by `OPENSCAD`, and shows the mesh OpenSCAD makes; STEP and IGES are not offered for it, because that mesh is not exact geometry. **`cadquery`** runs `.cq.py` scripts that call `show_object(...)` or set `result`. CadQuery pins an older OpenCASCADE binding than GCAD Studio, so it lives in an environment of its own:
+
+```bash
+uv venv cq && uv pip install --python cq cadquery
+export GCAD_CADQUERY_PYTHON=$PWD/cq/bin/python   # Windows: cq\Scripts\python.exe
+gcad export src/gcad/kernels/cadquery/examples/test_part.cq.py -o part.step
 ```
 
 ## Exports and units

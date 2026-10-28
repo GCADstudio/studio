@@ -1,0 +1,121 @@
+# ElmerGrid .grd -> GCore. Every line becomes a record ["tag" check args...] for the prelude's
+# (elmergrid records), which reads them the way ElmerGrid does. check is
+# (fn (ok why) (assert ok why)): built here, it carries the line's position, so an error the
+# prelude finds still points at the user's line. Unsupported keywords that change the geometry
+# fail at once with (assert false ...). See docs/kernel-authoring.md for the placeholders.
+
+[rules]
+start = "(elmergrid [$*] (fn (ok why) (assert ok why)))"
+
+# --- grid keywords, ElmerGrid's first pass -----------------------------------------------------
+version = '["version" (fn (ok why) (assert ok why)) $1]'
+old_version = '(assert false "Version 080500 is the pre-2003 ElmerGrid format, which this kernel does not read")'
+matc = "$1"
+matc_on = '["matc" (fn (ok why) (assert ok why)) true]'
+matc_off = '["matc" (fn (ok why) (assert ok why)) false]'
+coordinate_system = "$1"
+cartesian_1d = '(assert false "Coordinate System = Cartesian 1D is not supported: the geometry graph has no 1D shapes")'
+cartesian_2d = '["coordsys" (fn (ok why) (assert ok why)) 2]'
+cartesian_3d = '["coordsys" (fn (ok why) (assert ok why)) 3]'
+# ElmerGrid writes an axisymmetric grid exactly like a Cartesian 2D one: the r-z half-plane.
+axisymmetric = '["coordsys" (fn (ok why) (assert ok why)) 2]'
+polar = '(assert false "Coordinate System = Polar is not supported: ElmerGrid maps the grid to (r, phi) only through Polar Radius and Geometry Mappings")'
+unrecognised_2d = '(echo "ElmerGrid does not recognise this coordinate system and makes a 2D grid; so does this kernel") ["coordsys" (fn (ok why) (assert ok why)) 2]'
+subcell_divisions = '["divisions" (fn (ok why) (assert ok why)) $1]'
+subcell_limits = '["limits" (fn (ok why) (assert ok why)) $1 $2]'
+subcell_sizes = '["sizes" (fn (ok why) (assert ok why)) $1 $2]'
+subcell_origin = '["origin" (fn (ok why) (assert ok why)) $1 $2]'
+origin_left = '"left"'
+origin_min = '"min"'
+origin_center = '"center"'
+origin_right = '"right"'
+origin_max = '"max"'
+# The makers build the geometry of the cells at this block's position in the source, so the
+# viewer links each material back to its Material Structure.
+material_structure = '["structure" (fn (ok why) (assert ok why)) $1 (fn (x y w h) (translate [x y] (rect [w h]))) (fn (z h s) (translate [0 0 z] (linear_extrude :height h s))) (fn (n c s) (name n (color c s)))]'
+materials_interval = '["interval" (fn (ok why) (assert ok why)) $1]'
+
+# --- command keywords, ElmerGrid's second pass -------------------------------------------------
+extruded_divisions = '["ext_divisions" (fn (ok why) (assert ok why)) $1]'
+extruded_limits = '["ext_limits" (fn (ok why) (assert ok why)) $1]'
+extruded_sizes = '["ext_sizes" (fn (ok why) (assert ok why)) $1]'
+extruded_structure = '["ext_structure" (fn (ok why) (assert ok why)) $1]'
+extruded_material_mappings = '["ext_mappings" (fn (ok why) (assert ok why)) $1]'
+extruded_max_material = '["ext_maxmat" (fn (ok why) (assert ok why)) $1]'
+extruded_helicity = '["ext_helicity" (fn (ok why) (assert ok why)) $1]'
+# Extruded Elements/Ratios/Densities/BC Offset only shape the mesh, but any "Extruded" keyword
+# makes ElmerGrid extrude the grid, so the record still counts.
+extruded_mesh = '["extruded" (fn (ok why) (assert ok why)) [$*]]'
+# Renumbers materials after the mesh is made: the first matching "low high new" row applies.
+bulk_type_mappings = '["bulkmap" (fn (ok why) (assert ok why)) $1]'
+
+# --- mesh-only keywords: read and ignored ----------------------------------------------------
+# They set element counts, ratios and densities, element type and order, triangles, node and
+# element numbering, boundary conditions, output precision, node merging, mesh uniting and
+# partitioning. None moves a subcell boundary or changes a material, so the geometry is the
+# same whatever they say. Their records only carry any MATC on the line, which still runs.
+mesh_only = '["mesh" (fn (ok why) (assert ok why)) [$*]]'
+mesh_only_next_line = '["mesh_next" (fn (ok why) (assert ok why)) [$*]]'
+mesh_only_block = '["mesh_block" (fn (ok why) (assert ok why)) $1]'
+mesh_rows = "[$*]"
+# Words among those arguments (True, Horizontal, a file name) carry nothing the geometry needs.
+arg_word = ""
+star_line = '["star" (fn (ok why) (assert ok why))]'
+stray_end = '["mesh" (fn (ok why) (assert ok why)) []]'
+# ElmerGrid matches keywords by substring and has no "Scaling"; it leaves the mesh unscaled.
+scaling = '(echo "ElmerGrid does not read Scaling (its keyword is Scale), so the mesh it writes is not scaled; neither is this model") ["mesh" (fn (ok why) (assert ok why)) [$*]]'
+
+# --- keywords that change the geometry and are not supported -----------------------------------
+geometry_mappings = '(assert false "Geometry Mappings bend the subcell lines into curves; they are not supported")'
+boundary_layer = '(assert false "Boundary Layer adds elements along a boundary; it is not supported")'
+revolve = '(assert false "Revolve keywords turn the grid into a revolved solid; they are not supported")'
+start_new_mesh = '(assert false "Start New Mesh makes several meshes from one file; only one is supported")'
+transform = '(assert false (str $1:str " moves the mesh coordinates; it is not supported"))'
+coordinate_mapping = '(assert false "Coordinate Mapping swaps the coordinate axes; it is not supported")'
+renumber_material = '(assert false (str $1:str " renumbers the materials; it is not supported"))'
+unknown = '(assert false (str "unknown ElmerGrid keyword: " $1:str))'
+keyword_text = "$*"
+stray_numbers = '(assert false "a line of numbers with no keyword before it")'
+
+# --- values and MATC -------------------------------------------------------------------------
+values = "[$*]"
+rows = "[$*]"
+matc_line = '["matc_line" (fn (ok why) (assert ok why)) $1]'
+matc_tail = "$1"
+# A MATC program: its statements, run by the prelude in file order with the MATC variables.
+m_statements = '["$matc" [$*] (fn (ok why) (assert ok why))]'
+m_assign = '(fn (env) ["set" $1:str $2])'
+m_print = '(fn (env) ["out" $1])'
+# MATC expressions; every MATC value is a row vector, a list of numbers.
+m_number = "[$1]"
+m_number_d = "[(* $1 (pow 10 $2))]"
+m_ref = "(matc-ref env $1:str (fn (ok why) (assert ok why)))"
+m_call = "(matc-call env $1:str [$2*] (fn (ok why) (assert ok why)))"
+m_args = "$*"
+m_row = "(concat $*)"
+m_neg = "(matc-neg $2)"
+m_and = '(matc-op "&" $1 $2 (fn (ok why) (assert ok why)))'
+m_or = '(matc-op "|" $1 $2 (fn (ok why) (assert ok why)))'
+m_colon = "(matc-range $1 $2 (fn (ok why) (assert ok why)))"
+m_cmp = "(matc-op $2:str $1 $3 (fn (ok why) (assert ok why)))"
+m_add = '(matc-op "+" $1 $2 (fn (ok why) (assert ok why)))'
+m_sub = '(matc-op "-" $1 $3 (fn (ok why) (assert ok why)))'
+m_mul = '(matc-op "*" $1 $2 (fn (ok why) (assert ok why)))'
+m_div = '(matc-op "/" $1 $2 (fn (ok why) (assert ok why)))'
+m_pow = '(matc-op "^" $1 $2 (fn (ok why) (assert ok why)))'
+
+[tokens]
+NUMBER = "number"
+M_NUMBER = "number"
+M_MANTISSA = "number"
+M_EXPONENT = "number"
+M_NAME = "symbol"
+M_CALL = "symbol"
+M_COMPARE = "text"
+M_MINUS = "symbol"
+M_UMINUS = "symbol"
+WORD = "symbol"
+TRANSFORM_KW = "symbol"
+RENUMBER_KW = "symbol"
+STAR_LINE = "text"
+OLD_FORMAT = "text"

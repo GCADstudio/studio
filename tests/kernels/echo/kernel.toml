@@ -1,0 +1,11 @@
+id = "echo"
+name = "echo (process-kernel protocol test)"
+version = "1.0.0"
+description = "Answers the process-kernel protocol from a one-word script; used by the tests."
+extensions = [".echo"]
+comment = "#"
+parser = "process"
+
+[process]
+command = ["{python}", "{kernel}/program.py"]
+setup = "This kernel only exists for the tests."

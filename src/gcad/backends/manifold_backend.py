@@ -21,6 +21,7 @@ else:
 
 from gcad.core.graph import Graph, Node, circle_segments, default_tolerance, node_matrix
 from gcad.diagnostics import GcadError
+from gcad.importers import imported_mesh
 from gcad.mesh import RGBA, Mesh, MeshGroup
 
 # manifold3d ships no type stubs; a shape is a Manifold (3D) or a CrossSection (2D).
@@ -191,10 +192,16 @@ class _Realizer:
         return self.polyhedron(node)
 
     def imported(self, node: Node, color: RGBA | None) -> mf.Manifold:
-        """Explicit B-rep carried by the source (an `import` node): OpenCASCADE reads and
-        tessellates it, as for any mesh export from back-end B. Without OpenCASCADE (the web
-        studio, Windows on ARM) there is nothing that can read it. Each face keeps its own id
-        through booleans, labelled with the file entity it came from."""
+        """Geometry handed over as a file (an `import` node). A triangle mesh is read as it
+        is. Explicit B-rep (STEP) is read and tessellated by OpenCASCADE, as for any mesh
+        export from back-end B; without OpenCASCADE (the web studio, Windows on ARM) nothing
+        here can read it. Each B-rep face keeps its own id through booleans, labelled with the
+        file entity it came from."""
+        fmt, digest = str(node.arg("format")), str(node.arg("data"))
+        if digest not in self.blobs:
+            raise GcadError("the data this import reads is not in the graph", node.span)
+        if fmt != "step":
+            return self.tag(self.imported_mesh(node, fmt, digest), node, color)
         try:
             from gcad.backends.occt_backend import OcctModel, read_step, step_face_names
         except ImportError:
@@ -207,9 +214,6 @@ class _Realizer:
                 self.skipped.append(error)
                 return mf.Manifold()
             raise error from None
-        digest = str(node.arg("data"))
-        if digest not in self.blobs:
-            raise GcadError("the data this import reads is not in the graph", node.span)
         entity = int(node.num("entity"))
         shape = read_step(self.blobs[digest], entity, digest, node.span)
         names = step_face_names(digest, entity)
@@ -250,6 +254,20 @@ class _Realizer:
         if result.status() != mf.Error.NoError:
             raise GcadError(
                 f"polyhedron is not a closed, consistently oriented solid ({result.status().name})",
+                node.span,
+            )
+        return result
+
+    def imported_mesh(self, node: Node, fmt: str, digest: str) -> mf.Manifold:
+        vertices, tris = imported_mesh(self.blobs[digest], digest, fmt)
+        mesh = mf.Mesh(
+            vert_properties=np.asarray(vertices, dtype=np.float32),
+            tri_verts=np.asarray(tris, dtype=np.uint32),
+        )
+        result = mf.Manifold(mesh)
+        if result.status() != mf.Error.NoError:
+            raise GcadError(
+                f"the imported {fmt.upper()} mesh is not a closed solid ({result.status().name})",
                 node.span,
             )
         return result

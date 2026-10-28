@@ -1,0 +1,21 @@
+id = "cadquery"
+name = "CadQuery (Python, in its own environment)"
+version = "0.1.0"
+description = "Runs a CadQuery script in a Python environment you name and shows the exact solid it builds. CadQuery needs its own environment because it pins an older OCP than GCAD Studio."
+extensions = [".cq.py"]
+comment = "#"
+parser = "process"
+
+[process]
+command = ["{env:GCAD_CADQUERY_PYTHON}", "{kernel}/program.py"]
+setup = "Install CadQuery into a separate Python environment (for example: uv venv cq && uv pip install --python cq cadquery) and set GCAD_CADQUERY_PYTHON to that environment's python."
+
+[highlight]
+keywords = ["and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try", "while", "with", "yield"]
+operators = ["+", "-", "*", "/", "//", "%", "**", "=", "==", "!=", "<", "<=", ">", ">=", "(", ")", "[", "]", "{", "}", ",", ".", ":", "@"]
+
+[highlight.patterns]
+comment = ['#[^\n]*']
+number = ['(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?']
+string = ['"(\\.|[^"\\\n])*"', "'(\\\\.|[^'\\\\\\n])*'"]
+symbol = ['[A-Za-z_][A-Za-z0-9_]*']
