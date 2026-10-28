@@ -12,7 +12,7 @@ from gcad.backends import available_backends
 from gcad.core.sexpr import to_text
 from gcad.diagnostics import Diagnostic, GcadError, Severity
 from gcad.exporters import FORMATS
-from gcad.kernels import discover, load_kernel
+from gcad.kernels import Kernel, discover, is_trusted, load_kernel, trust
 from gcad.pipeline import evaluate_file, evaluate_source, export_file
 
 
@@ -34,6 +34,7 @@ def cmd_kernels(args: argparse.Namespace) -> int:
                 "name": k.name,
                 "version": k.version,
                 "extensions": list(k.extensions),
+                "filenames": list(k.filenames),
                 "parser": k.parser,
             }
             for k in kernels.values()
@@ -41,7 +42,12 @@ def cmd_kernels(args: argparse.Namespace) -> int:
         print(json.dumps(rows, indent=2))
         return 0
     for k in kernels.values():
-        print(f"{k.id:<12} {k.version:<8} {' '.join(k.extensions):<14} {k.name}")
+        print(f"{k.id:<12} {k.version:<8} {' '.join(k.extensions + k.filenames):<14} {k.name}")
+        if k.is_process:
+            from gcad.kernels.process import unavailable_reason
+
+            if reason := unavailable_reason(k):
+                print(f"{'':<12} unavailable: {reason}")
     return 0
 
 
@@ -120,6 +126,17 @@ def cmd_kernel_check(args: argparse.Namespace) -> int:
     if prelude:
         print(f"prelude ok: {len(prelude)} forms")
     examples = kernel.examples()
+    if kernel.is_process:
+        from gcad.kernels.process import unavailable_reason
+
+        reason = unavailable_reason(kernel)
+        if reason:
+            print(f"warning: examples not run: {reason}", file=sys.stderr)
+            return 1 if failures else 0
+        if not is_trusted(kernel):
+            print(f"error: {kernel.path} is not trusted; run 'gcad kernel trust'", file=sys.stderr)
+            return 1
+        print("program ok: " + " ".join(kernel.command))
     if not examples:
         print("warning: no examples/ to run", file=sys.stderr)
     for path in examples:
@@ -133,17 +150,32 @@ def cmd_kernel_check(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_kernel_trust(args: argparse.Namespace) -> int:
+    """FR-K6/FR-K7: let a kernel from this folder run its program."""
+    kernel = _kernel_arg(args.kernel)
+    if not kernel.is_process:
+        print(f"{kernel.id} runs no program; it needs no trust")
+        return 0
+    trust(kernel)
+    print(f"trusted {kernel.id}: {kernel.path}")
+    print("it runs: " + " ".join(kernel.command))
+    return 0
+
+
+def _kernel_arg(value: str) -> Kernel:
+    """A kernel named by its folder or by its id."""
+    target = Path(value)
+    if (target / "kernel.toml").is_file():
+        return load_kernel(target)
+    kernels, _ = discover()
+    if value not in kernels:
+        raise GcadError(f"no kernel '{value}' (give an id or a kernel folder)")
+    return kernels[value]
+
+
 def cmd_kernel_describe(args: argparse.Namespace) -> int:
     """What an editor needs: extensions, comment syntax, highlight classes (FR-K5)."""
-    target = Path(args.kernel)
-    if (target / "kernel.toml").is_file():
-        kernel = load_kernel(target)
-    else:
-        kernels, _ = discover()
-        if args.kernel not in kernels:
-            raise GcadError(f"no kernel '{args.kernel}' (give an id or a kernel folder)")
-        kernel = kernels[args.kernel]
-    print(json.dumps(kernel.describe(), indent=2))
+    print(json.dumps(_kernel_arg(args.kernel).describe(), indent=2))
     return 0
 
 
@@ -302,6 +334,9 @@ def build_parser() -> argparse.ArgumentParser:
     k = ksub.add_parser("describe", help="print a kernel's extensions and highlight classes")
     k.add_argument("kernel", help="kernel id or folder")
     k.set_defaults(func=cmd_kernel_describe)
+    k = ksub.add_parser("trust", help="allow a kernel that runs a program (process kernel)")
+    k.add_argument("kernel", help="kernel id or folder")
+    k.set_defaults(func=cmd_kernel_trust)
     return parser
 
 

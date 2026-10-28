@@ -24,6 +24,7 @@ const state = {
   result: null,
   formats: [],
   root: "",
+  asked: new Set(), // kernel folders the user was asked to trust in this session
 };
 
 hydrateIcons();
@@ -81,6 +82,7 @@ async function run() {
       kernel: state.file.kernel,
       source: editor.text(),
       file: state.file.name,
+      path: state.file.path || null,
       gcore: wantGcore,
     });
   } catch (error) {
@@ -89,6 +91,7 @@ async function run() {
     return;
   }
   if (seq !== state.seq) return; // a newer run is on its way
+  if (result.trust && (await askTrust(result.trust))) return run();
   state.result = result;
   editor.setDiagnostics(result.diagnostics);
   showProblems(result.diagnostics);
@@ -107,6 +110,20 @@ async function run() {
     setStatus("error", errors === 1 ? "1 error" : `${errors} errors`);
   }
   $("#console-meta").textContent = result.ok ? `graph ${result.hash}` : "showing the last good model";
+}
+
+// A kernel that runs a program (FR-K7) from a folder the user has not trusted yet: ask once.
+async function askTrust(trust) {
+  if (state.asked.has(trust.folder)) return false;
+  state.asked.add(trust.folder);
+  const ok = confirm(
+    `The kernel "${trust.kernel}" runs a program on your computer, with your rights:\n\n` +
+    `${trust.command}\n\nfrom the folder\n${trust.folder}\n\nTrust this kernel folder?`,
+  );
+  if (!ok) return false;
+  await rpc("kernel/trust", { kernel: trust.kernel });
+  log(`trusted kernel ${trust.kernel} (${trust.folder})`, "info");
+  return true;
 }
 
 function formatMs(ms) {
@@ -239,7 +256,8 @@ function newFile(kernelId) {
     csg: "; A new csg model\n(difference\n  (box [30 20 8])\n  (translate [15 10 -1] (cylinder :h 10 :d 6)))\n",
     parts: "# A new parts list\npart base: box 30 20 8\ncut  hole: cylinder d 6 h 10 at 15 10 -1\n",
   };
-  setFile({ path: null, name: `untitled${kernel.extensions[0]}`, kernel: kernelId, readOnly: false });
+  const name = kernel.extensions.length ? `untitled${kernel.extensions[0]}` : kernel.filenames[0];
+  setFile({ path: null, name, kernel: kernelId, readOnly: false });
   editor.load(starters[kernelId] || "", kernel);
   setDirty(true);
   state.fitNext = true;
@@ -377,8 +395,10 @@ function downloadFile() {
 
 function uploadFile() {
   const input = $("#upload-input");
-  // .exp: an EXPRESS schema, kept to check ISO 10303 files against (SPEC FR-I4)
-  input.accept = [...[...state.kernels.values()].flatMap((k) => k.extensions), ".exp"].join(",");
+  // .exp: an EXPRESS schema, kept to check ISO 10303 files against (SPEC FR-I4).
+  // `accept` can list extensions but not file names, so a kernel that claims names lifts the filter.
+  const kernels = [...state.kernels.values()];
+  input.accept = kernels.some((k) => k.filenames?.length) ? "" : [...kernels.flatMap((k) => k.extensions), ".exp"].join(",");
   input.value = ""; // choosing the same file again still counts as a change
   input.click();
 }
@@ -470,6 +490,7 @@ async function runExport(format, button) {
       kernel: state.file.kernel,
       source: editor.text(),
       file: state.file.name,
+      path: state.file.path || null,
       format: format.id,
       options: {
         schema: $("#opt-schema").value,

@@ -1,10 +1,12 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 milestones (M8 to M13, §12.2) and their acceptance criteria (AC-13 to AC-20, §10) are proposed and await approval; so are M14 (ISO 10303 parametric exchange, §5.5) and M15 (PMI viewing), §12.3, with AC-21 to AC-26. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 plan (M8 to M13, §12.2; AC-13 to AC-20, §10) was approved on 2026-10-27; M8 is implemented. M14 (ISO 10303 parametric exchange, §5.5) and M15 (PMI viewing), §12.3, with AC-21 to AC-26, are proposed and await approval. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
 GCAD Studio is a language-agnostic, code-first CAD environment: what Jupyter did for IPython, GCAD Studio does for OpenSCAD. A **kernel** is a modelling language defined by a formal grammar plus declarative rewrite rules. The studio parses the source with that grammar, rewrites it into one shared functional core language, evaluates it to a neutral geometry graph, realizes the graph on an open-source geometry engine, shows it in a 3D viewer next to the editor, and exports it to neutral and vendor formats. Adding a language means adding a folder of text files, not writing a CAD program.
+
+**Language neutrality** (set 2026-10-27): the core (GCore, the geometry graph, the back-ends, the exporters, the protocols and the studio) names no particular language. Everything specific to one language lives in its kernel folder, and no kernel is routed through another. OpenSCAD is one kernel among many: `minscad` is the first grammar kernel and `openscad` (M8) one process kernel, neither privileged. New geometry operations are added to GCore and the graph for every kernel to use.
 
 The MVE (minimum viable example) proves that loop end-to-end with two languages, two geometry engines, a CLI, a local browser UI and the export formats listed in §8.
 
@@ -124,7 +126,7 @@ A kernel is a folder; no Python is required:
 
 ```
 kernels/minscad/
-  kernel.toml     id, display name, version, file extensions, comment syntax, start rule, parser (gcore|earley|lalr)
+  kernel.toml     id, display name, version, file extensions or names, comment syntax, start rule, parser (gcore|earley|lalr)
   grammar.lark    Lark EBNF grammar of the surface language
   rewrite.toml    [rules]: one GCore template per tree name; [tokens]: how terminals become GCore atoms
   prelude.gcore   optional GCore definitions evaluated in their own scope (e.g. OpenSCAD's cube -> box)
@@ -146,11 +148,11 @@ range_step = "(range $1 $3 $2)"
 |---|---|---|
 | FR-K1 | M | Grammar notation is Lark EBNF, loaded at run time (Earley for any context-free grammar, LALR(1) when declared for speed). No parser generation step. |
 | FR-K2 | M | Rewrite rules are declarative templates; a kernel that is only `kernel.toml`, `grammar.lark` and `rewrite.toml` works. |
-| FR-K3 | M | Dropping a kernel folder into the kernel path (`./kernels`, user config dir, or `GCAD_KERNEL_PATH`) makes it available to the next CLI command and to the UI after a kernel reload. |
+| FR-K3 | M | Dropping a kernel folder into the kernel path (`./kernels`, user config dir, or `GCAD_KERNEL_PATH`) makes it available to the next CLI command and to the UI after a kernel reload. A kernel claims files by extension (`extensions`), by exact file name (`filenames`, for files that have no extension, as editors treat `Makefile`), or both. File names match exactly and case-sensitively, so `Name.orig` or `myName` is not `Name`; an exact name outranks any extension, and otherwise the longest extension wins (`.cq.py` before `.py`). |
 | FR-K4 | M | `gcad kernel check <dir>` validates the manifest, compiles the grammar, checks that every tree the grammar can produce has a rewrite rule (and warns about rules that match nothing), reads the prelude, and runs `examples/`. |
 | FR-K5 | M | Syntax highlighting is derived from the grammar: word literals become keywords, other literals operators, ignored terminals comments, and named terminals take the classes in `rewrite.toml [tokens]`. `gcad kernel describe <id>` prints them for an editor. |
 | FR-K6 | S | Optional `transform.py` escape hatch for semantics templates cannot express. Such kernels are marked **trusted-only** and the UI asks before loading one from an untrusted folder. |
-| FR-K7 | S | Process kernels: an external program speaking the stdio protocol (§7.2) returns a geometry graph, a STEP file or a mesh. First target: OpenSCAD, using its `.csg` export parsed by the `minscad` grammar. |
+| FR-K7 | S | Process kernels: an external program speaking the stdio protocol (§7.2) returns a geometry graph, a STEP file or a mesh. As built in M8: the manifest says `parser = "process"` and names the program in `[process] command` (with `{python}`, `{kernel}` and `{env:NAME}` fields) and what to install in `setup`; a kernel without a grammar may declare its highlighting in `[highlight]`. A process kernel from outside the bundled kernels runs only once the user trusts its folder (`gcad kernel trust`, or the studio's prompt); the trust is tied to a hash of the folder's files, so editing the program withdraws it. Bundled: `openscad` and `cadquery`. |
 | FR-K8 | C | Import of ISO 14977 EBNF and W3C EBNF grammars by conversion to Lark. As built in M14 for Wirth Syntax Notation (`gcad grammar import --notation wsn`), the notation of ISO 10303-11 and -21; used to check a hand-written grammar against a standard's own productions. |
 | FR-K9 | S | A kernel may name a semantic checker the engine provides (`checker` in `kernel.toml`): it reads the source after the grammar accepted it and adds diagnostics, for what a context-free grammar cannot decide. Its errors mean the source does not conform; they are reported, and `gcad eval` exits non-zero, but the model is still built. (M14: `iso10303-21`.) |
 
@@ -160,6 +162,7 @@ Bundled kernels:
 - **`csg`** (M): an S-expression language close to GCore, showing that a homoiconic language needs almost no rewrite rules: three, as built in M2. File extension `.gcsg`, because OpenSCAD already uses `.csg` for its CSG-tree export (FR-K7).
 - **`parts`** (added in M2 for AC-5): a declarative parts list, one solid per line, written only as `kernel.toml`, `grammar.lark` and `rewrite.toml`.
 - **`elmergrid`** (added 2026-10-28): ElmerGrid's `.grd` structured-mesh format from Elmer FEM, to show that a kernel need not be a CAD language. Written only as `kernel.toml`, `grammar.lark`, `rewrite.toml` and `prelude.gcore`, with no change to the core. The prelude reads the file as ElmerGrid does, in its two passes (grid keywords, then command keywords), and makes one `name`d, coloured solid (3D) or region (2D) per material. Supported: Cartesian 2D and 3D grids and axisymmetric ones (written as 2D, as ElmerGrid does), `Subcell Divisions`/`Limits`/`Sizes`/`Origin`, `Material Structure` (first row = top row of cells), `Materials Interval`, extrusion with `Extruded Divisions`/`Limits`/`Sizes`/`Structure`/`Material Mappings`/`Max Material`, `Bulk Type Mappings`, and MATC: assignments and `$` values with MATC's own precedence (space-separated operands form a row before any operator), whitespace rule for unary minus, radians, 12-digit output, indexing, ranges and its common functions. Keywords that only shape the mesh (element counts, ratios, densities, types, triangles, numbering, boundaries, node merging, partitioning) are read and ignored. Errors at the line, never a different model: `Geometry Mappings`, `Revolve`, `Polar`, `Cartesian 1D`, `Start New Mesh`, `Boundary Layer`, the coordinate commands (`Scale`, `Translate`, `Rotate Mesh`, `Mirror`, `Clone`, `Polar Radius`, `Cylinder`, `Coordinate Mapping`), material renumbering other than `Bulk Type Mappings`, a nonzero `Extruded Helicity`, unknown keywords, the 080500 format, and the places where ElmerGrid itself misreads a file: a MATC result of more than 4 numbers (MATC wraps it), a MATC error, a line ElmerGrid takes as the arguments of the line before (after a MATC-only line once MATC has printed, or after a `*` line with MATC on), and a matrix with too few rows. Checked against ElmerGrid's own mesh: per material, the area or volume and the bounds agree to 1e-9 relative on 441 of the 531 distinct `.grd` files in Elmer's sources; the other 90 are errors by design. The corpus has no MATC, so MATC is checked on the kernel's own cases against an ElmerGrid built with MATC.
+- **`blockmesh`**: OpenFOAM's `blockMeshDict` (claimed by the file name `blockMeshDict` and the extension `.blockMeshDict`), the dictionary a CFD block mesh is made from, written only as a grammar, rewrite rules, a prelude and examples. It shows the solid the hex blocks occupy, each block a `name`d, `color`ed polyhedron per cell zone, in millimetres (OpenFOAM metres times `scale`, `convertToMeters` or `units [m|cm|mm|um|km]`). Read: `key value;` entries as defines, `$name`, `$a/b`, `$!a/b`, `$/a/b`, `-$name` and `#neg` as references, sub-dictionaries; `hex` blocks with OpenFOAM's vertex and face numbering and its inside-out check, named vertices and blocks, collapsed vertices on straight blocks; `arc` (mid point, `origin [factor]`, angle and axis), `polyLine` and `line` edges, a curved block's faces being the Coons patches of their edges, sampled at 7.5° per piece. Ignored, as mesh-only: cell counts, `simpleGrading`/`edgeGrading`, `boundary`, `patches`, `defaultPatch`, `mergePatchPairs`, `FoamFile`, `geometry`, `#remove`. Errors at their line: projections (`project` vertices, edges and faces), `spline`/`BSpline` and other edge types, `transform`, `#include*`, `#codeStream`, `#if`/`#ifeq`, `#inputMode`, `$:` and file macros, and any value computed by `#calc`, `#eval` or `${...}` where geometry uses it.
 
 - **`iso10303`** (M14, §5.5): ISO 10303-21 exchange files (`.stp`, `.step`, `.p21`), a Lark grammar of the exchange structure, 18 rewrite rules and a prelude that builds geometry from the instances, with the `iso10303-21` checker.
 
@@ -177,7 +180,7 @@ The evaluator emits a JSON directed acyclic graph; identical sub-trees share one
 | 3D→2D | `section(plane)` M; `projection(view, hidden_lines)` S. As built in M4: `section(z)` cuts at height z (other planes: rotate the model first); `project` gives the outline seen from +z (no hidden lines); minscad's `projection(cut)` maps onto both, as in OpenSCAD. Both run on back-end M; back-end B reports them as not supported yet. |
 | Attributes | `color(rgba)`, `name`; `material` S |
 | Document | `units` (default mm; also cm, m, in), metadata (title, author, revision) |
-| Import | `import(format, data, entity)`: geometry a back-end reads from content the graph keeps by its SHA-256 (`Graph.blobs`), so the hash covers it. As built in M14 for STEP read by back-end B (the whole file); back-end M uses back-end B's tessellation where it is installed. |
+| Import | `import(format, data, entity, bounds)`: geometry a back-end reads from content the graph keeps by its SHA-256 (`Graph.blobs`), so the hash covers it; `bounds` (x0 y0 z0 x1 y1 z1) is optional. As built in M14 for STEP read by back-end B (the whole file); back-end M uses back-end B's tessellation where it is installed. M8 adds the meshes a process kernel hands over (STL, OFF, 3MF), which back-end M reads directly and back-end B refuses (FR-B4). |
 
 FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stable SHA-256; the same model written in two kernels must yield the same hash once spans are stripped.
 
@@ -238,6 +241,18 @@ In web mode (§4.1) the same requests and responses travel by `postMessage` betw
 ### 7.2 Server ↔ process kernel (S)
 
 JSON-RPC 2.0 over the child's stdin/stdout, newline-delimited. `initialize → {name, version, extensions, outputs}`, `evaluate {source, params, workdir} → {diagnostics, graph | step_path | mesh_path}`, `shutdown`. The child runs in its own working directory with the same time and memory limits as FR-C6.
+
+As built in M8 (`gcad.kernels.process`; the module docstring is the reference):
+
+- `initialize {protocol: 1, client} → {name, version}`.
+- `evaluate {source, file, folder, workdir, params} → {diagnostics, graph | step_path | mesh_path}`. `folder` is where the source file lives, so a language can find the files it includes.
+- A diagnostic is `{severity, message, line?, col?, end_line?, end_col?}`, 1-based.
+- `graph` is the canonical graph JSON (`gcad eval --dump graph`); node ids are recomputed and unknown ops refused.
+- `step_path` and `mesh_path` (STL, OFF or 3MF, mm) must name files inside `workdir`. They become one `import` node (§5.3) whose `data` is the file's SHA-256; the graph carries the bytes (`Graph.blobs`). Back-end B reads STEP exactly and refuses meshes (FR-B4); back-end M tessellates STEP through OpenCASCADE.
+- The child may send `log {message, severity?}` notifications, and stray output lines are kept as info.
+- The program is started once and kept running between evaluations, because starting some languages costs seconds (importing CadQuery took 2 to 6 s). Starting has its own 60 s allowance; the FR-C6 wall-time limit applies to each `evaluate`. When the limit passes, a newer evaluation replaces it, or the program fails, the program and everything it started are ended, and the next evaluation starts a new one.
+- No memory limit is enforced yet.
+- Process kernels are a native feature: the web studio lists them as unavailable and hides their examples.
 
 ## 8. Export formats
 
@@ -318,9 +333,9 @@ Web deployment mode (M7, §4.1), checked in CI against the built site served by 
 
 v0.2 (proposed, §12.2):
 
-13. **AC-13 OpenSCAD as a process kernel:** every bundled minscad example, opened as a `.scad` file with the `openscad` kernel, gives the same graph hash as minscad once spans are stripped, and so the same exports. A file that uses `text()` renders through OpenSCAD's own mesh, the console says so, and STEP export of it is refused (FR-B4). Checked in CI on a runner with OpenSCAD installed; skipped elsewhere.
+13. **AC-13 Process kernel for OpenSCAD:** every bundled 3D minscad example, opened as a `.scad` file with the `openscad` kernel, gives the solid minscad builds: the same bounds within 1e-4 mm and volume within 1e-5 relative (OpenSCAD's 3MF carries six decimals). A file that uses `text()` renders, and STEP export of it is refused (FR-B4). OpenSCAD's errors point at their line, and `include` finds files next to the source. A 2D model is reported as not supported yet. Checked in CI on a runner with OpenSCAD installed; skipped elsewhere. (Revised during M8: an earlier draft parsed OpenSCAD's `.csg` export with the minscad grammar and compared graph hashes; that tied one kernel to another, against language neutrality, §1.)
 14. **AC-14 CadQuery as a process kernel:** a CadQuery script for the AC-2 part exports to STEP and IGES and re-reads with volume 12,000 − 160π mm³ within 1e-6 relative. A script that loops forever is stopped at the wall-time limit with a diagnostic, and the studio stays responsive. Opening a process kernel from an untrusted folder asks for consent first.
-15. **AC-15 OpenSCAD parity, second set:** new examples using `hull`, `minkowski`, `offset`, `include`/`use` and `import` (STL and DXF) are valid OpenSCAD files and match OpenSCAD 2021.01 within the tolerances of `tests/test_openscad_parity.py`, in minscad and through the `openscad` kernel's `.csg` route (no mesh fallback).
+15. **AC-15 New geometry operations:** `hull`, `minkowski`, `offset` and `import` are GCore built-ins with unit tests on back-end M, and are used from at least two kernels (`csg` and `minscad`). minscad examples using them, plus `include`/`use`, are valid OpenSCAD files and match OpenSCAD 2021.01 within the tolerances of `tests/test_openscad_parity.py`.
 16. **AC-16 Notebooks:** a `.gcadnb` document with a minscad cell, a csg cell and a Markdown cell runs in server mode and in web mode with the same results (triangle count, bounds, volume). Saving it twice without changes gives identical bytes.
 17. **AC-17 Jupyter:** `jupyter nbconvert --execute` runs a notebook that uses the `gcad` Jupyter kernel with no display. Each geometry cell's output contains a binary glTF that reads back with trimesh and matches the CLI export's volume, and the 3D view in JupyterLab renders with no network request (headless Chrome).
 18. **AC-18 Exact drawings:** on back-end B, a section of the AC-2 part at z = 5 exports to DXF as one CIRCLE of radius 4 and one closed 40 × 30 outline, exact within 1e-9 mm, and to SVG with an arc, not a polygon. A hidden-line front view of the bracket puts visible and hidden edges on separate DXF layers and SVG classes.
@@ -360,14 +375,14 @@ ISO 10303 parametric exchange (M14, proposed, §5.5):
 
 v0.1.0 was released on 2026-10-27 as a GitHub Release (wheel and sdist). The PyPI job is built but switched off, so NFR-4's `pip install gcad-studio` is not met yet.
 
-### 12.2 v0.2 (proposed 2026-10-27, awaiting approval)
+### 12.2 v0.2 (approved 2026-10-27)
 
-Goal: open OpenSCAD and CadQuery files as they are, make the notebook in "Jupyter for CAD" real, and draw from exact geometry. Each milestone lands as one pull request with its acceptance criteria in CI, and v0.2.0 is published on PyPI.
+Goal: let any language with a program of its own be a kernel, with OpenSCAD and CadQuery as the first two, open their files as they are, make the notebook in "Jupyter for CAD" real, and draw from exact geometry. Each milestone lands as one pull request with its acceptance criteria in CI, and v0.2.0 is published on PyPI.
 
 | Milestone | Content | Exit check |
 |---|---|---|
-| M8 | **Process kernels** (FR-K7, §7.2), server mode only: a runner that starts the child in its own working folder, speaks the stdio protocol, enforces the FR-C6 wall-time limit by ending the process, and asks for consent as for trusted-only kernels (FR-K6). Two bundled process kernels. **`openscad`** uses the OpenSCAD the user has installed, found on PATH or in the standard install folders. It turns the file into OpenSCAD's `.csg` export and parses that with the minscad grammar and a prelude for `multmatrix`, `group`, `render` and the other `.csg` operations. For operations the graph does not have yet, it uses OpenSCAD's own mesh of the whole model, and the console says so. **`cadquery`** runs a CadQuery script in a separate Python environment that the user names (`GCAD_CADQUERY_PYTHON`) and reads back the STEP file the script writes (`step_path`) on back-end B. | AC-13, AC-14 |
-| M9 | **OpenSCAD parity.** New graph operations on back-end M: `hull`, `minkowski` and 2D `offset` (`r`, `delta`, `chamfer`). Back-end B reports them as not supported (FR-B4). minscad gains `include`/`use` (paths relative to the file, inside the served folder), `if` and `each` in list comprehensions, `intersection_for`, `import()` of STL, OFF and DXF (STEP on back-end B), and OpenSCAD's rule that the last assignment wins in the whole scope. `text()` stays with the `openscad` kernel, because fonts are out of scope. | AC-15 |
+| M8 | **Process kernels** (FR-K7, §7.2), server mode only. A runner, which knows no particular language, starts a kernel's program, speaks the stdio protocol, enforces the FR-C6 wall-time limit by ending the program, and runs a kernel from outside the bundled set only after the user trusts its folder (FR-K6). Geometry comes back as a graph, a STEP file or a mesh. Two bundled process kernels, each just a folder: **`openscad`** runs the OpenSCAD the user has installed (PATH, the standard install folders, or `OPENSCAD`) on the whole file and returns its mesh. **`cadquery`** runs a CadQuery script in a separate Python environment the user names (`GCAD_CADQUERY_PYTHON`) and returns a STEP file, so the geometry stays exact. Implemented; see §7.2 for what was built. | AC-13, AC-14 |
+| M9 | **New geometry operations for every kernel.** GCore built-ins and graph ops `hull`, `minkowski`, 2D `offset` (`r`, `delta`, `chamfer`) and `import` (STL, OFF, 3MF and DXF files; STEP on back-end B), on back-end M; back-end B reports the mesh-only ones as not supported (FR-B4). Each grammar kernel exposes them in its own syntax. The minscad kernel also closes its listed gaps (§5.2): `include`/`use`, `if` and `each` in list comprehensions, `intersection_for`, and the whole-scope assignment rule. | AC-15 |
 | M10 | **Notebooks** (FR-U10). In the studio, `.gcadnb` documents hold Markdown cells and code cells, each code cell bound to a kernel. All cells add to one shared scene, and each cell shows its own diagnostics, view and measurements. The file is JSON with sorted keys and stores no outputs by default, so it diffs cleanly in git. A Jupyter kernel, `gcad`, runs the same cells in JupyterLab and outputs a binary glTF plus a self-contained viewer that needs no network. | AC-16, AC-17 |
 | M11 | **Drawings from exact geometry.** On back-end B: sections on any plane and projections, keeping analytic curves as DXF CIRCLE and ARC entities and as SVG arcs. Hidden-line views for the standard views (FR-B6, OCCT HLR). Rulers in the 2D view (FR-U9). The second half of FR-U7: selecting source highlights the geometry it made. | AC-18 |
 | M12 | **More formats.** PLY, OFF and 3MF with our own writers (from C to S). Tetrahedral UNV through Gmsh, an optional dependency (§8.1). DWG as an optional plug-in that drives a converter the user installs (§8.3): ODA File Converter (free of charge, proprietary, never bundled) or LibreDWG's `dxf2dwg`, whose write support stops at R2004. 3D PDF stays a research item. | AC-19 |
@@ -384,12 +399,12 @@ R1 measures download size and the API coverage the binding needs, and tries to w
 Facts checked on 2026-10-27 that shape this plan:
 
 - CadQuery 2.8.0 requires `cadquery-ocp >=7.9.3.1, <8.0`, while gcad requires `>=8.0.1`, so CadQuery cannot share gcad's environment and runs as a process kernel.
-- OpenSCAD 2021.01's `.csg` export keeps `text()`, `hull()`, `minkowski()` and `offset()` as operations rather than resolving them into geometry, so M8's mesh fallback covers them until M9 adds hull, Minkowski and offset to the graph.
+- OpenSCAD 2021.01's `.csg` export keeps `text()`, `hull()`, `minkowski()` and `offset()` as operations rather than resolving them into geometry. OpenSCAD's own 3MF output has six decimals (micrometres) and its OFF output six significant digits, so the `openscad` kernel asks for 3MF.
 - The `manifold3d` wheel provides `hull`, `minkowski_sum` and `CrossSection.offset`.
 
 For review:
 
-1. **Order:** M8 comes first because it opens every existing OpenSCAD file at once. M9 then shrinks M8's mesh fallback.
+1. **Order:** M8 comes first because it opens every existing OpenSCAD and CadQuery file at once.
 2. **Process kernels are not a sandbox.** They run the user's code with the user's rights. The plan relies on consent, a separate working folder and the time limit.
 3. **M13 needs the owner's two steps** on pypi.org and in the repository settings.
 4. **Not in v0.2:** assemblies and PMI, fillets and chamfers, CAM, CAE decks, the node editor, an LSP bridge, ACIS, PHIGS and 3D PDF.

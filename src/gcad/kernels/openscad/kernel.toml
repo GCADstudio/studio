@@ -1,0 +1,23 @@
+id = "openscad"
+name = "OpenSCAD (your installed OpenSCAD)"
+version = "0.1.0"
+description = "Runs the OpenSCAD you have installed on the whole file and shows the mesh it makes. Exact formats (STEP, IGES) are not available, because OpenSCAD produces meshes."
+extensions = [".scad"]
+comment = "//"
+parser = "process"
+
+[process]
+command = ["{python}", "{kernel}/program.py"]
+setup = "Install OpenSCAD from https://openscad.org, or set OPENSCAD to the OpenSCAD program."
+
+# No grammar: highlighting is declared here, in the same shape a grammar kernel derives.
+[highlight]
+keywords = ["module", "function", "if", "else", "for", "let", "each", "include", "use", "true", "false", "undef", "assert", "echo", "intersection_for"]
+operators = ["!", "!=", "#", "%", "&&", "(", ")", "*", "+", ",", "-", ".", "/", ":", ";", "<", "<=", "=", "==", ">", ">=", "?", "[", "]", "^", "{", "||", "}"]
+
+[highlight.patterns]
+comment = ['\/\*(.|\n)*?\*\/', '\/\/[^\n]*']
+number = ['(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?']
+string = ['"(\\.|[^"\\\n])*"']
+symbol = ['\$?[A-Za-z_][A-Za-z0-9_]*']
+text = ['<[^>\n]*>']

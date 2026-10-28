@@ -26,6 +26,8 @@ comment = "#"
 parser = "lalr"
 ```
 
+A language whose files have no extension claims them by exact name instead, as editors do for `Makefile`: `filenames = ["Stackfile"]`, alone or next to `extensions`. Names match exactly and case-sensitively, so `Stackfile.orig` and `myStackfile` are not claimed; an exact name outranks any extension, and otherwise the longest extension wins. `examples/` can hold only one file of each name, so a kernel that claims names usually also gives an extension for its examples.
+
 **`stack/grammar.lark`** is a [Lark](https://lark-parser.readthedocs.io/) EBNF grammar. Give every alternative that should become a node an alias (`-> name`); the `?` before `item` lets an alternative without an alias pass its single child through.
 
 ```lark
