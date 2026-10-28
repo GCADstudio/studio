@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.0a1
+
+A pre-release of v0.2 (2026-10-28): the web studio, process kernels, ISO 10303 parametric exchange and two kernels for formats that are not CAD languages. M9 to M13 of the v0.2 plan are still to come; the wheel is on GitHub Releases, not on PyPI.
+
 **Kernel `elmergrid`.** ElmerGrid's `.grd` structured-mesh format from Elmer FEM, MATC expressions included, as a bundled kernel: grammar, rewrite rules, a GCore prelude and five examples, with no change to the core. Each material becomes a named, coloured solid or region, so a `.grd` file opens in the studio and exports like any other model. Keywords that only shape the mesh are ignored; ones that change the geometry and are not supported are errors at their line. Checked against ElmerGrid itself: per-material area or volume and bounds match on 441 of the 531 distinct `.grd` files in Elmer's sources, and every other file is an error by design (SPEC §5.2).
 
 **ISO 10303 parametric exchange (M14, proposed; SPEC §5.5).** A kernel, `iso10303`, opens STEP files (`.stp`, `.step`, `.p21`): ISO 10303-42 CSG and 2D CSG, ISO 10303-55 histories, ISO 10303-108 parameters with ISO 13584-20 expressions (a slider on a parameter drives the model), ISO 10303-111 holes, pockets and bosses, ISO 10303-112 sketches and colours; explicit B-rep is read by OpenCASCADE. Each file is checked against the EXPRESS schema its header names, every WHERE, UNIQUE and global rule evaluated, with diagnostics at the instance. The export format `step-parametric` writes any model back as parametric STEP under the AP242 long form, which reads back to the same graph. Its grammar is traced to the standard's own productions and checked against them; a coverage matrix gives every AP242 entity a status. The ISO 10303 stack is freecad-nxstyle's, vendored. New for every kernel: `letrec`, records and `at`, data built-ins, `import_source`, named string decoders, semantic checkers, trace mode, graph export formats, and `gcad grammar import` for Wirth Syntax Notation. New commands: `gcad iso schema` and `gcad iso check`.

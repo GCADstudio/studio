@@ -117,9 +117,13 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           awk -v h="## $version" '$0 == h {on = 1; next} /^## / {on = 0} on' CHANGELOG.md > notes.md
           test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+      # A version with a letter in it (0.2.0a1, 0.2.0rc1) is a pre-release.
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "GCAD Studio $GITHUB_REF_NAME" --notes-file notes.md
+        run: |
+          pre=""
+          case "${GITHUB_REF_NAME#v}" in *[a-z]*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --title "GCAD Studio $GITHUB_REF_NAME" --notes-file notes.md $pre
 
   # Off until a PyPI trusted publisher is set up for this repository (pypi.org, project
   # gcad-studio, workflow release.yml, environment pypi) and the repository variable
