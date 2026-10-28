@@ -29,6 +29,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
+from gcad.core.annotations import Annotation
 from gcad.core.graph import ArgValue, Graph, Node, empty, make_node
 from gcad.core.sexpr import Expr, Kw, Num, SList, Str, Sym
 from gcad.core.trace import Traced
@@ -117,6 +118,11 @@ class Builtin:
 class EvalResult:
     graph: Graph | None
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    #: what the model says about its geometry (FR-C11); not part of the graph or its hash
+    annotations: list[Annotation] = field(default_factory=list)
+    #: where each named record was written, by name (a STEP instance's `#n`), so geometry a
+    #: back-end labels with a source entity (an imported face) can point back to it
+    records: dict[str, Span] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -185,6 +191,8 @@ class Evaluator:
         #: the source text, for `import-source`; set by run()
         self.source = ""
         self.blobs: dict[str, bytes] = {}
+        self.annotations: list[Annotation] = []
+        self.records: dict[str, Span] = {}
         #: the program's own scope in trace mode: its numeric definitions become parameters
         self.trace_env: Env | None = None
 
@@ -222,7 +230,7 @@ class Evaluator:
             else:
                 root = self.node("union", {}, shapes, None)
             graph = Graph(root, metadata=dict(metadata or {}), blobs=dict(self.blobs))
-            return EvalResult(graph, self.diagnostics)
+            return EvalResult(graph, self.diagnostics, self.annotations, self.records)
         except GcadError as exc:
             self.diagnostics.append(exc.diagnostic)
         except RecursionError:

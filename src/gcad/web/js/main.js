@@ -3,6 +3,7 @@ import { rpc, openOnStart, mode, onTransportStatus } from "./rpc.js";
 import { hydrateIcons, icon } from "./icons.js";
 import { createEditor } from "./editor.js";
 import { Viewer } from "./viewer.js";
+import { createAnnotationPanel } from "./pmi.js";
 
 const $ = (sel) => document.querySelector(sel);
 const LIVE_DELAY = 380;
@@ -44,7 +45,8 @@ const editor = createEditor($("#editor"), {
 const viewer = new Viewer($("#viewer"), {
   onPick(group) {
     const card = $("#pick-card");
-    if (!group || !group.spans.length) { card.hidden = true; return; }
+    if (!group || !group.spans.length) { card.hidden = true; annotations.pickEntity(null); return; }
+    annotations.pickEntity(group.entity);
     const span = group.spans[0];
     editor.reveal(span.start, span.end);
     card.replaceChildren();
@@ -55,13 +57,15 @@ const viewer = new Viewer($("#viewer"), {
       : "#a9b6cc";
     const where = document.createElement("span");
     where.className = "muted";
-    where.textContent = `line ${span.line}`;
+    where.textContent = group.entity ? `${group.entity} · line ${span.line}` : `line ${span.line}`;
     const code = document.createElement("code");
     code.textContent = editor.lineText(span.start);
     card.append(swatch, where, code);
     card.hidden = false;
   },
 });
+
+const annotations = createAnnotationPanel($("#pmi-panel"), { viewer, editor });
 
 // ---------- running ----------
 
@@ -98,6 +102,7 @@ async function run() {
   if (result.ok) {
     const first = state.shown === 0;
     viewer.show(result, { fit: first || state.fitNext });
+    annotations.update(result.annotations);
     state.fitNext = false;
     state.shown++;
     $("#empty-state").hidden = true;

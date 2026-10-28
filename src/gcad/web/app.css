@@ -293,6 +293,42 @@ code { font-family: var(--font-mono); font-size: .95em; color: var(--syn-fn); }
 .model-card .size { grid-column: 1 / -1; font: 600 14px var(--font-mono); margin-bottom: 4px; letter-spacing: .2px; }
 .model-card .size small { color: var(--muted); font-weight: 400; font-size: 12px; }
 
+/* the annotation (PMI) panel, under the viewer toolbar */
+.pmi-panel {
+  position: absolute;
+  top: 62px;
+  right: 14px;
+  width: min(340px, calc(100% - 28px));
+  max-height: calc(100% - 180px);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  overflow: hidden;
+}
+.pmi-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.pmi-head .spacer { flex: 1; }
+.pmi-panel.collapsed .pmi-body { display: none; }
+.pmi-panel.collapsed .pmi-head { border-bottom: 0; }
+.pmi-body { overflow: auto; padding: 4px 0 6px; }
+.pmi-views { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px; }
+.chip { font: inherit; font-size: 11px; color: var(--text-2); background: var(--panel-2); border: 1px solid var(--border); border-radius: 20px; padding: 1px 9px; cursor: pointer; }
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+.chip.active { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.pmi-section summary { cursor: pointer; padding: 5px 10px; color: var(--muted); font-weight: 560; user-select: none; }
+.pmi-row { display: flex; align-items: center; gap: 7px; padding: 3px 10px 3px 14px; cursor: pointer; }
+.pmi-row:hover { background: var(--panel-2); }
+.pmi-row.active { background: var(--accent-soft); }
+.pmi-row.hit .pmi-label { color: var(--accent); }
+.pmi-row input { margin: 0; accent-color: var(--accent); }
+.pmi-kind { width: 13px; text-align: center; color: var(--muted); }
+.pmi-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.pmi-ref { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.pmi-details { margin: 6px 10px 2px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+.pmi-details dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+.pmi-details dt { color: var(--muted); }
+.pmi-details dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.pmi-details .targets { display: flex; flex-wrap: wrap; gap: 4px; }
+
 .pick-card {
   position: absolute;
   left: 14px;

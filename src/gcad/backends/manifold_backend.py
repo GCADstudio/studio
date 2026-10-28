@@ -28,11 +28,22 @@ Shape: TypeAlias = Any
 
 
 class ManifoldModel:
-    def __init__(self, shape: Shape, dim: int, origins: dict[int, MeshGroup], root_id: str) -> None:
+    def __init__(
+        self,
+        shape: Shape,
+        dim: int,
+        origins: dict[int, MeshGroup],
+        root_id: str,
+        faces: dict[int, list[str | None]] | None = None,
+    ) -> None:
         self.shape = shape
         self.dim = dim
         self.origins = origins
         self.root_id = root_id
+        #: for an imported mesh, by its original id: the source entity of each face id
+        self.faces = faces or {}
+        #: imports left out of a preview, with the reason (`realize(skip_imports=True)`)
+        self.skipped: list[GcadError] = []
 
     def mesh(self) -> Mesh:
         if self.dim != 3:
@@ -43,13 +54,26 @@ class ManifoldModel:
         triangles = np.asarray(m.tri_verts, dtype=np.int64).reshape(-1, 3)
         run_index = np.asarray(m.run_index, dtype=np.int64)
         run_ids = np.asarray(m.run_original_id, dtype=np.int64)
+        # (the browser build of Manifold returns no face ids; it imports no B-rep either)
+        face_id = np.asarray(getattr(m, "face_id", []), dtype=np.int64)
         groups: list[MeshGroup] = []
         tri_group = np.zeros(len(triangles), dtype=np.int64)
         for r, original in enumerate(run_ids):
             group = self.origins.get(int(original), MeshGroup(self.root_id, None))
-            if group not in groups:
-                groups.append(group)
-            tri_group[run_index[r] // 3 : run_index[r + 1] // 3] = groups.index(group)
+            lo, hi = run_index[r] // 3, run_index[r + 1] // 3
+            entities = self.faces.get(int(original))
+            if entities is None or len(face_id) != len(triangles):
+                if group not in groups:
+                    groups.append(group)
+                tri_group[lo:hi] = groups.index(group)
+                continue
+            # An imported B-rep keeps a group per face, labelled with the face's entity.
+            for f in np.unique(face_id[lo:hi]):
+                entity = entities[f] if 0 <= f < len(entities) else None
+                g = MeshGroup(group.node_id, group.color, entity)
+                if g not in groups:
+                    groups.append(g)
+                tri_group[lo + np.flatnonzero(face_id[lo:hi] == f)] = groups.index(g)
         return Mesh(vertices, triangles, groups, tri_group)
 
     def contours(self) -> list[np.ndarray]:
@@ -77,14 +101,22 @@ class ManifoldModel:
 
     def is_valid(self) -> bool:
         if self.dim == 3:
-            return bool(self.shape.status() == mf.Error.NoError)
+            # (Manifold's JS build marks the empty solid it makes from a zero cube as invalid)
+            return self.shape.is_empty() or bool(self.shape.status() == mf.Error.NoError)
         return True
 
 
 class _Realizer:
-    def __init__(self, tolerance: float, blobs: dict[str, bytes] | None = None) -> None:
+    def __init__(
+        self, tolerance: float, blobs: dict[str, bytes] | None = None, skip_imports: bool = False
+    ) -> None:
         self.tolerance = tolerance
+        #: a preview without OpenCASCADE leaves imported B-rep out (and says so) rather than
+        #: failing, so what else the source carries (its annotations) can still be shown
+        self.skip_imports = skip_imports
+        self.skipped: list[GcadError] = []
         self.origins: dict[int, MeshGroup] = {}
+        self.faces: dict[int, list[str | None]] = {}
         self.blobs = blobs or {}
 
     def tag(self, m: mf.Manifold, node: Node, color: RGBA | None) -> mf.Manifold:
@@ -108,7 +140,7 @@ class _Realizer:
         if node.dim == 3 and op in ("box", "sphere", "cylinder", "polyhedron"):
             return self.tag(self.primitive3(node), node, color)
         if op == "import":
-            return self.tag(self.imported(node), node, color)
+            return self.imported(node, color)
         if op == "rect":
             return mf.CrossSection.square(node.vec("size"), bool(node.arg("center")))
         if op == "circle":
@@ -158,28 +190,39 @@ class _Realizer:
             )
         return self.polyhedron(node)
 
-    def imported(self, node: Node) -> mf.Manifold:
+    def imported(self, node: Node, color: RGBA | None) -> mf.Manifold:
         """Explicit B-rep carried by the source (an `import` node): OpenCASCADE reads and
         tessellates it, as for any mesh export from back-end B. Without OpenCASCADE (the web
-        studio, Windows on ARM) there is nothing that can read it."""
+        studio, Windows on ARM) there is nothing that can read it. Each face keeps its own id
+        through booleans, labelled with the file entity it came from."""
         try:
-            from gcad.backends.occt_backend import OcctModel, read_step
+            from gcad.backends.occt_backend import OcctModel, read_step, step_face_names
         except ImportError:
-            raise GcadError(
+            error = GcadError(
                 "explicit B-rep geometry is read by OpenCASCADE (back-end occt), which is not "
                 "available here; the browser studio shows CSG and procedural models only",
                 node.span,
-            ) from None
+            )
+            if self.skip_imports:
+                self.skipped.append(error)
+                return mf.Manifold()
+            raise error from None
         digest = str(node.arg("data"))
         if digest not in self.blobs:
             raise GcadError("the data this import reads is not in the graph", node.span)
-        shape = read_step(self.blobs[digest], int(node.num("entity")), digest, node.span)
-        mesh = OcctModel(shape, 3, self.tolerance, node.id, None, None).mesh()
+        entity = int(node.num("entity"))
+        shape = read_step(self.blobs[digest], entity, digest, node.span)
+        names = step_face_names(digest, entity)
+        mesh = OcctModel(shape, 3, self.tolerance, node.id, None, None, names).mesh()
+        original = int(mf.Manifold.reserve_ids(1))
         try:
             m = mf.Manifold(
                 mf.Mesh(
-                    vert_properties=np.asarray(mesh.vertices, dtype=np.float32),
-                    tri_verts=np.asarray(mesh.triangles, dtype=np.uint32),
+                    vert_properties=np.array(mesh.vertices, dtype=np.float32),
+                    tri_verts=np.array(mesh.triangles, dtype=np.uint32).reshape(-1, 3),
+                    run_index=np.array([0, 3 * len(mesh.triangles)], dtype=np.uint32),
+                    run_original_id=np.array([original], dtype=np.uint32),
+                    face_id=np.array(mesh.tri_group, dtype=np.uint32),
                 )
             )
         except Exception as exc:  # manifold3d raises its own error types
@@ -190,6 +233,8 @@ class _Realizer:
                 "booleans; use --backend occt",
                 node.span,
             )
+        self.origins[original] = MeshGroup(node.id, color)
+        self.faces[original] = [g.entity for g in mesh.groups]
         return m
 
     def polyhedron(self, node: Node) -> mf.Manifold:
@@ -238,10 +283,16 @@ class ManifoldBackend:
     name = "manifold"
     capabilities = frozenset({"mesh", "2d"})
 
-    def realize(self, graph: Graph, tolerance: float | None = None) -> ManifoldModel:
+    def realize(
+        self, graph: Graph, tolerance: float | None = None, skip_imports: bool = False
+    ) -> ManifoldModel:
         tol = tolerance if tolerance is not None else default_tolerance(graph)
         if tol <= 0:
             raise GcadError("tessellation tolerance must be positive")
-        realizer = _Realizer(tol, graph.blobs)
+        realizer = _Realizer(tol, graph.blobs, skip_imports)
         shape = realizer.build(graph.root, None)
-        return ManifoldModel(shape, graph.root.dim, realizer.origins, graph.root.id)
+        model = ManifoldModel(
+            shape, graph.root.dim, realizer.origins, graph.root.id, realizer.faces
+        )
+        model.skipped = realizer.skipped
+        return model

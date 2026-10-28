@@ -185,6 +185,13 @@ def test_every_example_matches_the_native_mesh_backend(page: object, native: Stu
         ref = native.rpc_document_evaluate(**args)  # type: ignore[arg-type]
         assert web["ok"] and ref["ok"], example["name"]
         assert web["hash"] == ref["hash"], example["name"]
+        assert web.get("annotations") == ref.get("annotations"), example["name"]
+        if any(g.get("entity") for g in ref.get("groups", [])):
+            # explicit B-rep: OpenCASCADE reads it natively; the browser has none, leaves it out
+            # with a warning and still shows the file's PMI (AC-30)
+            assert web["triangles"] == 0 and web["annotations"], example["name"]
+            assert any("OpenCASCADE" in d["message"] for d in web["diagnostics"])
+            continue
         assert np.allclose(web["bounds"], ref["bounds"], rtol=1e-6, atol=1e-6), example["name"]
         assert web["area"] == pytest.approx(ref["area"], rel=1e-6), example["name"]
         if ref["dim"] == 3:

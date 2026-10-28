@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 milestones (M8 to M13, §12.2) and their acceptance criteria (AC-13 to AC-20, §10) are proposed and await approval; so are M14 (ISO 10303 parametric exchange, §5.5) and M15 (PMI viewing), §12.3, with AC-21 to AC-26. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 milestones (M8 to M13, §12.2) and their acceptance criteria (AC-13 to AC-20, §10) are proposed and await approval; so are M14 (ISO 10303 parametric exchange, §5.5) and M15 (PMI viewing), §12.3, with AC-21 to AC-30. Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -116,6 +116,7 @@ Priority uses MoSCoW: **M** = Must for the MVE, **S** = Should, **C** = Could.
 | FR-C7 | M | Diagnostics (parse, rewrite, evaluation, back-end) carry severity, message and source span. |
 | FR-C8 | S | `letrec`: bindings in any order, each evaluated once when first used; a name bound twice and a cycle of references are errors that name them. Without a body, its value is the list of every binding's value. (M14, for languages with forward references such as ISO 10303-21.) |
 | FR-C9 | S | Records: `(record ...)` makes a list that remembers its source span; `(at record body)` attributes the geometry and diagnostics of body to it, so code in a prelude can build geometry that points back to the user's source. (M14.) |
+| FR-C11 | S | Annotations: `(annotate id label ...)` reports what the model says about its geometry (a note, a dimension, a tolerance, a saved view) with optional polylines and triangles in model coordinates, the named records it applies to, related annotations and `[name value]` details. Annotations travel beside the graph, never in it, so they change no hash and no back-end sees them. (M15.) |
 | FR-C10 | S | Trace mode: the program's top-level numeric definitions are its parameters, and arithmetic keeps how each number was computed from them, without changing the graph (FR-G1). Exporters that carry parameters use it. (M14.) |
 
 ### 5.2 Kernels: a language defined by a formal grammar
@@ -205,6 +206,7 @@ The design, its decisions and its verification are in [docs/design/iso10303-kern
 | FR-I5 | S | **Geometry.** ISO 10303-42 CSG primitives, booleans, half-spaces, replicas, extruded and revolved areas and 2D CSG; ISO 10303-111 round holes, plain pockets and bosses; ISO 10303-55 histories; ISO 10303-112 sketch commands that make regions; colours of whole solids. Explicit B-rep is read by back-end B. Everything else met in a model stops evaluation with a diagnostic naming the instance (FR-B4). |
 | FR-I6 | S | **Parameters.** ISO 10303-108 free-form assignments and equal-parameter constraints give bound attributes their values from ISO 13584-20 expressions; a slider on a parameter's value drives the model. |
 | FR-I7 | S | **Parametric export.** `step-parametric` writes the graph as ISO 10303-42 CSG in an ISO 10303-55 history, the program's numeric definitions as ISO 10303-108 parameters (FR-C10), under the AP242 long form; the kernel reads it back to the same graph hash. Written from the graph, with no back-end, so also in the web studio. What has no ISO 10303-42 form is refused with a diagnostic. |
+| FR-I9 | S | **PMI viewing (M15).** A file's graphical PMI (tessellated annotation occurrences, annotation curve occurrences of polylines and circles, grouped by draughting callout) is drawn in model coordinates; its semantic PMI (geometric tolerances and their subtypes, datums, datum features, datum systems, datum targets, dimensional sizes and locations with their values and plus-minus tolerances) is listed with the faces each applies to, through shape aspects and their item usages, and with the callouts that present it; saved views (draughting models with a camera) show their own annotations and look along the camera. All of it is the prelude's `annotate` calls (FR-C11); the geometry and its graph hash are as without PMI. Explicit B-rep faces keep the `#n` they were read from (FR-U7). |
 | FR-I8 | S | **Coverage.** A matrix generated from the schemas gives every entity of the AP242 long form and of the resource parts a status (supported, delegated to back-end B, refused with a diagnostic, out of scope) and a reason; a test fails on any entity without one, or a supported entity without a fixture. |
 
 ## 6. Functional requirements: user interface and CLI
@@ -220,6 +222,7 @@ The design, its decisions and its verification are in [docs/design/iso10303-kern
 | FR-U7 | S | Click geometry in the viewer → highlight the source span that created it, and the reverse. As built in M5: click → source (the face lights up, the editor selects the call that made it); source → geometry not yet. |
 | FR-U8 | S | Sliders on numeric literals (D9): scrubbing rewrites the literal in the source and re-evaluates. As built in M5. |
 | FR-U9 | S | 2D view for 2D models and sections, with true-scale rulers. As built in M5: a top view with a millimetre grid and the extents in the stats card; no rulers yet. |
+| FR-U11 | S | Annotation panel (M15): the annotations of FR-C11 beside the viewer, by section (annotations, tolerances, dimensions, datums), each drawn one with a check box, saved views as chips that filter and orient; a row selects its source span, lights up the faces it applies to and the annotations it is linked to, and shows its details; a face clicked in the viewer marks the rows that apply to it. |
 | FR-U10 | C | Notebook documents (`.gcadnb`, JSON like `.ipynb`): cells, each bound to a kernel, sharing one scene; later a Jupyter kernel wrapper. |
 | FR-CLI1 | M | `gcad kernels`, `gcad eval <file> [--kernel k] [--dump gcore|graph]`, `gcad export <file> -f <fmt> -o <out> [--backend B|M] [--tol …]`, `gcad kernel check <dir>`, `gcad serve`. As built in M14, also `gcad iso schema list|fetch|add|build`, `gcad iso check <file>` and `gcad grammar import --notation wsn`. |
 | FR-CLI2 | M | The CLI needs no display, GPU or browser; it is the reference path for tests and automation. Exit code 0 on success, non-zero on any error diagnostic. |
@@ -335,6 +338,13 @@ ISO 10303 parametric exchange (M14, proposed, §5.5):
 25. **AC-25 Negative controls:** a syntax error, a dangling `#n`, a duplicate `#n`, a reference cycle, a WHERE-rule violation, an entity outside the schema and an unsupported ISO 10303-111 feature each give their exact diagnostic at the instance.
 26. **AC-26 Round trip and determinism:** every bundled minscad, csg and parts example exports as parametric STEP and reads back to the same graph hash, or is refused with its stated reason; two processes write byte-identical files.
 
+PMI viewing (M15, proposed, §5.5 FR-I9):
+
+27. **AC-27 NIST CTC-01:** the bundled `nist_ctc_01_asme1_ap242-e1.stp` gives 23 drawn callouts, 1 saved view, 6 geometric tolerances, 12 dimensions, 3 datums, 3 datum features and 2 datum systems; Position.1 reads `⌖ 0.75 mm | A | B | C` on faces #805 and #801 and is linked to its callout #628; the graph hash is the one the file has without PMI.
+28. **AC-28 NIST CTC-05:** the bundled `nist_ctc_05_asme1_ap242-e1.stp` (polyline PMI, inches) gives 22 drawn callouts and the saved views MBD_A and MBD_B, in millimetres in model coordinates.
+29. **AC-29 Faces:** with OpenCASCADE, every face of CTC-01's B-rep is a mesh group labelled with its `ADVANCED_FACE` `#n`, and every face a PMI item targets is one of them; the studio sends each such face with the span of its instance.
+30. **AC-30 Both studios:** the PMI of CTC-01 is seen in the native studio and in the web studio, where OpenCASCADE is absent: the B-rep is left out with a warning and the annotations are still drawn and listed.
+
 ## 11. Decisions to confirm before development
 
 1. **Stack:** Python core + local browser UI (recommended, §4) versus C++/Qt as discussed in 2018.
@@ -400,7 +410,7 @@ Alongside v0.2 and independent of it; each lands as one pull request.
 | Milestone | Content | Exit check |
 |---|---|---|
 | M14 | **ISO 10303 parametric exchange** (§5.5): the `iso10303` kernel, the `iso10303-21` checker, the engine features it needs (FR-C8 to FR-C10, FR-K8, FR-K9, the `import` op), the parametric STEP writer and the coverage matrix. | AC-21 to AC-26 |
-| M15 | **PMI viewing.** A STEP file's semantic PMI (datums, geometric tolerances, dimensions with their tolerances) listed in the console and attached to its faces, and its graphical PMI (annotation curves and tessellated annotations, callouts) drawn in the viewer in their presentation planes; from freecad-nxstyle's `pmi.py`, `gdt.py` and `ap242.py`. | To be written with M15 |
+| M15 | **PMI viewing** (FR-I9, FR-C11, FR-U11): a STEP file's semantic PMI (datums, geometric tolerances, dimensions with their tolerances) listed in the studio's annotation panel and attached to its faces, and its graphical PMI (annotation curves and tessellated annotations, callouts) drawn in the viewer, with saved views; read by the kernel's prelude (data), with NIST's CTC test files as examples. | AC-27 to AC-30 |
 
 ## 13. Glossary
 

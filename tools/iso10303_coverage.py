@@ -93,6 +93,31 @@ SUPPORTING = [
         "colours of whole solids",
     ),
     ("application_context application_protocol_definition product_context", "file context"),
+    (
+        "draughting_callout annotation_occurrence annotation_curve_occurrence "
+        "tessellated_annotation_occurrence annotation_plane draughting_model camera_model_d3 "
+        "view_volume planar_box geometric_set geometric_curve_set tessellated_geometric_set "
+        "repositioned_tessellated_item tessellated_curve_set triangulated_surface_set "
+        "complex_triangulated_surface_set coordinates_list curve_style "
+        "draughting_pre_defined_curve_font draughting_model_item_association",
+        "graphical PMI and saved views: drawn in the viewer as annotations (M15)",
+    ),
+    (
+        "geometric_tolerance geometric_tolerance_with_datum_reference "
+        "geometric_tolerance_with_modifiers angularity_tolerance circular_runout_tolerance "
+        "coaxiality_tolerance concentricity_tolerance cylindricity_tolerance flatness_tolerance "
+        "line_profile_tolerance parallelism_tolerance perpendicularity_tolerance "
+        "position_tolerance roundness_tolerance straightness_tolerance surface_profile_tolerance "
+        "symmetry_tolerance total_runout_tolerance tolerance_zone tolerance_zone_form datum "
+        "datum_feature datum_system datum_reference_compartment datum_target "
+        "placed_datum_target_feature shape_aspect composite_shape_aspect "
+        "shape_aspect_relationship geometric_item_specific_usage "
+        "item_identified_representation_usage dimensional_size angular_size "
+        "dimensional_location angular_location dimensional_characteristic_representation "
+        "shape_dimension_representation plus_minus_tolerance tolerance_value "
+        "measure_representation_item",
+        "semantic PMI: listed with the faces it applies to and the callouts presenting it (M15)",
+    ),
 ]
 
 BREP_SCHEMAS = {"topology_schema", "geometry_schema"}
@@ -100,8 +125,8 @@ OUT_OF_SCOPE = [  # (pattern on the entity name, reason)
     (
         r"tolerance|datum|dimension|dimensional|annotation|draughting|callout|pmi|geometric_item_specific|"
         r"shape_aspect|feature_definition|placed_datum|tolerance_zone|limits_and_fits",
-        "PMI, GD&T and MBD annotations: validated against the schema; "
-        "viewing them is planned (M15)",
+        "PMI, GD&T and MBD: validated against the schema; the PMI reader (M15) does not "
+        "show this kind yet",
     ),
     (
         r"kinematic|pair|joint|mechanism|link|motion",

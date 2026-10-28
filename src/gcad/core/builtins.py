@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 import numpy as np
 
+from gcad.core.annotations import Annotation, Target
 from gcad.core.evaluator import (
     Builtin,
     BuiltinFn,
@@ -751,10 +752,116 @@ def b_fail(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
 
 
 def b_record(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> Record:
-    """(record item...): a list that remembers where it was written (FR-C9)."""
+    """(record item...): a list that remembers where it was written (FR-C9). A record whose
+    first item is a non-empty string is named by it, so a back-end that labels geometry with a
+    source entity (an imported face's `#n`) can point back to where it was written."""
     if kwargs:
         raise GcadError("'record' takes no named arguments", ctx.span)
+    if args and isinstance(args[0], str) and args[0] and ctx.span is not None:
+        ctx.ev.records.setdefault(args[0], ctx.span)
     return Record(list(args), ctx.span)
+
+
+def _flat_points(value: object, what: str, span: Span | None) -> list[float]:
+    """[[x y z] ...] -> [x y z ...]; 2D points get z = 0."""
+    if not isinstance(value, list):
+        raise GcadError(f"{what} must be a list of points", span)
+    out: list[float] = []
+    for p in value:
+        v = as_vec(p, (2, 3), f"each point of {what}", span)
+        out.extend(v if len(v) == 3 else [*v, 0.0])
+    for x in out:
+        if not math.isfinite(x):
+            raise GcadError(f"{what} has a coordinate that is not finite", span)
+    return out
+
+
+def _texts(value: object, what: str, span: Span | None) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise GcadError(f"{what} must be a list of strings", span)
+    return list(value)  # type: ignore[arg-type]
+
+
+def b_annotate(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
+    """(annotate id label :kind :lines :triangles :color :views :targets :links :details :camera):
+    report what the model says about its geometry (FR-C11): a note, a dimension, a tolerance, a
+    view. Kept beside the graph, never in it. Attributed to the record `at` names."""
+    v, _ = bind(
+        "annotate",
+        [
+            ("id", None),
+            ("label", ""),
+            ("kind", "note"),
+            ("lines", []),
+            ("triangles", []),
+            ("color", None),
+            ("views", []),
+            ("targets", []),
+            ("links", []),
+            ("details", []),
+            ("camera", None),
+        ],
+        args,
+        kwargs,
+        ctx,
+    )
+    span = ctx.ev.attribution or ctx.span
+    if not isinstance(v["id"], str) or not v["id"]:
+        raise GcadError("an annotation needs an id, a non-empty string", span)
+    if not isinstance(v["label"], str) or not isinstance(v["kind"], str):
+        raise GcadError("an annotation's label and kind must be strings", span)
+    lines = v["lines"]
+    if not isinstance(lines, list):
+        raise GcadError("lines must be a list of polylines", span)
+    polylines = [_flat_points(line, "a polyline", span) for line in lines]
+    polylines = [p for p in polylines if len(p) >= 6]
+    triangles = _flat_points(v["triangles"], "triangles", span)
+    if len(triangles) % 9:
+        raise GcadError("triangles must have three points per triangle", span)
+    color = None
+    if v["color"] is not None:
+        c = as_vec(v["color"], (3, 4), "color", span)
+        color = (c[0], c[1], c[2], c[3] if len(c) == 4 else 1.0)
+    targets: list[Target] = []
+    raw_targets = v["targets"]
+    if not isinstance(raw_targets, list):
+        raise GcadError("targets must be a list of records or names", span)
+    for t in raw_targets:
+        if isinstance(t, Record) and t and isinstance(t[0], str):
+            targets.append(Target(t[0], t.span))
+        elif isinstance(t, str):
+            targets.append(Target(t, ctx.ev.records.get(t)))
+        else:
+            raise GcadError("each target must be a named record or a name", span)
+    details = v["details"]
+    if not isinstance(details, list) or not all(
+        isinstance(d, list) and len(d) == 2 and isinstance(d[0], str) for d in details
+    ):
+        raise GcadError("details must be a list of [name value] pairs", span)
+    camera = None
+    if v["camera"] is not None:
+        cam = v["camera"]
+        if not isinstance(cam, list) or len(cam) != 3:
+            raise GcadError("camera must be [position direction up]", span)
+        camera = [as_vec(c, (3,), "each vector of camera", span) for c in cam]
+    ctx.ev.annotations.append(
+        Annotation(
+            id=v["id"],
+            label=v["label"],
+            kind=v["kind"],
+            span=span,
+            lines=polylines,
+            triangles=triangles,
+            color=color,
+            views=_texts(v["views"], "views", span),
+            targets=targets,
+            links=_texts(v["links"], "links", span),
+            # a value is shown as text; an undefined one leaves its pair out
+            details=[(d[0], show(d[1])) for d in details if d[1] is not None],  # type: ignore[index]
+            camera=camera,
+        )
+    )
+    return None
 
 
 def b_resolve(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> object:
@@ -775,6 +882,42 @@ def b_contains(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> b
     if len(args) != 2 or not isinstance(args[0], list):
         raise GcadError("'contains' takes a list and a value", ctx.span)
     return any(_equal(x, args[1]) for x in args[0])
+
+
+def b_position(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> float:
+    """(position list value): the index of the first element equal to value, or -1. With
+    two parallel lists it is a lookup table, which code in a prelude needs for large files."""
+    if len(args) != 2 or not isinstance(args[0], list):
+        raise GcadError("'position' takes a list and a value", ctx.span)
+    needle = args[1]
+    if isinstance(needle, str):  # the common case, names: no deep comparison
+        for i, x in enumerate(args[0]):
+            if x == needle and isinstance(x, str):
+                return float(i)
+        return -1.0
+    for i, x in enumerate(args[0]):
+        if _equal(x, needle):
+            return float(i)
+    return -1.0
+
+
+def b_positions(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> list[object]:
+    """(positions list value): the indices of every element equal to value."""
+    if len(args) != 2 or not isinstance(args[0], list):
+        raise GcadError("'positions' takes a list and a value", ctx.span)
+    needle = args[1]
+    if isinstance(needle, str):
+        return [float(i) for i, x in enumerate(args[0]) if isinstance(x, str) and x == needle]
+    return [float(i) for i, x in enumerate(args[0]) if _equal(x, needle)]
+
+
+def b_filter(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> list[object]:
+    """(filter list keep): the elements for which (keep element) is true, in order."""
+    if len(args) != 2 or not isinstance(args[0], list):
+        raise GcadError("'filter' takes a list and a function", ctx.span)
+    items, keep = args[0], args[1]
+    ctx.ev.count_iterations(len(items), ctx.span)
+    return [x for x in items if truthy(ctx.ev.apply(keep, [x], {}, ctx.span, ctx.env))]
 
 
 def b_apply(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> object:
@@ -920,9 +1063,13 @@ def global_env() -> Env:
         "info": b_info,
         "fail": b_fail,
         "record": b_record,
+        "annotate": b_annotate,
         "resolve": b_resolve,
         "apply": b_apply,
         "contains": b_contains,
+        "position": b_position,
+        "positions": b_positions,
+        "filter": b_filter,
         "split": _text_fn("split", 2, lambda s, sep: s.split(sep)),
         "upper": _text_fn("upper", 1, str.upper),
         "lower": _text_fn("lower", 1, str.lower),

@@ -66,6 +66,9 @@ def cmd_eval(args: argparse.Namespace) -> int:
         return 1
     if args.dump == "graph":
         print(json.dumps(graph.to_json(spans=True), indent=2, sort_keys=True))
+    elif args.dump == "annotations":
+        for a in evaluated.result.annotations:
+            print(a.summary())
     elif args.dump == "hash":
         print(graph.hash())
     elif args.dump == "summary":
@@ -73,6 +76,11 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(
             f"{'ok' if not failed else 'built, not conformant'}: kernel {evaluated.kernel.id}, "
             f"{graph.root.dim}D model, {len(nodes)} distinct nodes, graph {graph.hash()[:16]}"
+            + (
+                f", {len(evaluated.result.annotations)} annotations"
+                if evaluated.result.annotations
+                else ""
+            )
         )
     return 1 if failed else 0
 
@@ -240,7 +248,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("eval", help="evaluate a source file and report or dump the result")
     p.add_argument("file")
     p.add_argument("--kernel", help="kernel id (default: from the file extension)")
-    p.add_argument("--dump", choices=["summary", "gcore", "graph", "hash"], default="summary")
+    p.add_argument(
+        "--dump", choices=["summary", "gcore", "graph", "hash", "annotations"], default="summary"
+    )
     p.set_defaults(func=cmd_eval)
 
     p = sub.add_parser("export", help="evaluate a source file and export it")

@@ -28,6 +28,25 @@ function themeColors() {
   };
 }
 
+// Annotation colours: the file's, unless it is plain black or white (a drawing's default pen),
+// which would vanish on one of the themes; then the theme's ink.
+function annotationInk() {
+  return document.documentElement.dataset.theme === "light" ? new THREE.Color("#1d2433") : new THREE.Color("#eef1f8");
+}
+
+function annotationColor(rgba, ink) {
+  if (!rgba) return ink.clone();
+  const [r, g, b] = rgba;
+  if ((r > 0.95 && g > 0.95 && b > 0.95) || (r < 0.05 && g < 0.05 && b < 0.05)) return ink.clone();
+  return new THREE.Color().setRGB(r, g, b, THREE.SRGBColorSpace);
+}
+
+function unionBounds(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return [a[0].map((v, i) => Math.min(v, b[0][i])), a[1].map((v, i) => Math.max(v, b[1][i]))];
+}
+
 export class Viewer {
   constructor(container, { onPick } = {}) {
     this.container = container;
@@ -177,15 +196,93 @@ export class Viewer {
     this.groups = [];
     this.ranges = [];
     this.selected = this.hovered = -1;
+    this.annotations = new Map();
+    this.marked = new Set();
   }
 
   show(result, { fit = false } = {}) {
     this.lastResult = result;
+    const hidden = this.hiddenAnnotations || new Set();
     this.clear();
     if (result.dim === 2) this.show2d(result);
     else this.show3d(result);
-    this.stage(result.bounds);
+    const drawn = this.showAnnotations(result.annotations || []);
+    for (const id of hidden) this.setAnnotationVisible(id, false);
+    this.stage(unionBounds(result.bounds, drawn));
     if (fit) this.setView(this.is2d ? "top" : "iso");
+    this.invalidate();
+  }
+
+  // ---------- annotations (FR-C11): lines and filled glyphs in model coordinates ----------
+
+  showAnnotations(list) {
+    const ink = annotationInk();
+    let lo = null, hi = null;
+    const grow = (a) => {
+      for (let i = 0; i < a.length; i += 3) {
+        const p = [a[i], a[i + 1], a[i + 2]];
+        lo = lo ? lo.map((v, k) => Math.min(v, p[k])) : p.slice();
+        hi = hi ? hi.map((v, k) => Math.max(v, p[k])) : p.slice();
+      }
+    };
+    for (const a of list) {
+      if (!a.lines && !a.triangles) continue;
+      const color = annotationColor(a.color, ink);
+      const group = new THREE.Group();
+      group.userData.color = color;
+      if (a.lines) {
+        const segments = [];
+        for (const line of a.lines) {
+          grow(line);
+          for (let i = 0; i + 5 < line.length; i += 3) segments.push(...line.slice(i, i + 6));
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(segments, 3));
+        group.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color })));
+      }
+      if (a.triangles) {
+        grow(a.triangles);
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(a.triangles, 3));
+        group.add(new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })));
+      }
+      group.renderOrder = 2;
+      this.annotations.set(a.id, group);
+      this.root.add(group);
+    }
+    return lo ? [lo, hi] : null;
+  }
+
+  setAnnotationVisible(id, visible) {
+    this.hiddenAnnotations = this.hiddenAnnotations || new Set();
+    if (visible) this.hiddenAnnotations.delete(id);
+    else this.hiddenAnnotations.add(id);
+    const group = this.annotations.get(id);
+    if (group) group.visible = visible;
+    this.invalidate();
+  }
+
+  // Emphasise some annotations (accent) and the faces whose source entity is in `entities`.
+  emphasise(ids = [], entities = []) {
+    const accent = themeColors().accent;
+    const on = new Set(ids);
+    for (const [id, group] of this.annotations) {
+      for (const child of group.children) child.material.color.copy(on.has(id) ? accent : group.userData.color);
+    }
+    this.marked = new Set(this.groups.map((g, i) => (g.entity && entities.includes(g.entity) ? i : -1)).filter((i) => i >= 0));
+    this.paint();
+  }
+
+  // A saved view: look along its direction with its up, framing the model.
+  lookAlong(camera) {
+    if (!this.bounds || !camera) return;
+    const [, dir, up] = camera.map((v) => new THREE.Vector3(...v));
+    const distance = this.fitDistance();
+    this.controls.target.copy(this.bounds.center);
+    this.camera.position.copy(this.bounds.center).addScaledVector(dir.normalize(), -distance);
+    this.camera.up.copy(up.normalize());
+    this.camera.lookAt(this.bounds.center);
+    this.controls.update();
     this.invalidate();
   }
 
@@ -401,7 +498,7 @@ export class Viewer {
     if (!this.mesh) return;
     const accent = themeColors().accent;
     this.mesh.material.forEach((m, i) => {
-      const strength = i === this.selected ? 0.38 : i === this.hovered ? 0.16 : 0;
+      const strength = i === this.selected ? 0.38 : this.marked?.has(i) ? 0.3 : i === this.hovered ? 0.16 : 0;
       m.emissive.copy(accent).multiplyScalar(strength);
     });
     this.invalidate();

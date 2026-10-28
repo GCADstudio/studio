@@ -8,3 +8,6 @@ parser = "lalr"
 # The semantic layer the engine runs after parsing: header, form and rules against the
 # EXPRESS schemas the file names (SPEC FR-K9, FR-I4).
 checker = "iso10303-21"
+# STEP files are data, often of thousands of instances (NIST's PMI test files): longer than the
+# engine's 10 s for a program, which the web studio's Python needs on such files (FR-C6).
+time_limit = 30

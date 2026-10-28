@@ -36,6 +36,10 @@ REQUIRED = ("id", "name", "version", "extensions", "parser")
 CHECKERS = {"iso10303-21": "gcad.iso10303.check"}
 
 
+#: the longest time limit a kernel may ask for, in seconds
+MAX_TIME_LIMIT = 60
+
+
 @dataclass(frozen=True)
 class Kernel:
     id: str
@@ -48,6 +52,9 @@ class Kernel:
     description: str = ""
     start: str = "start"
     checker: str = ""
+    #: seconds an evaluation may take when more than the engine's limit (FR-C6), for languages
+    #: whose files are large data rather than programs; at most MAX_TIME_LIMIT
+    time_limit: float = 0.0
 
     @property
     def is_grammar(self) -> bool:
@@ -129,6 +136,13 @@ def load_kernel(folder: Path) -> Kernel:
         raise GcadError(f"{manifest}: parser must be one of {', '.join(PARSERS)}")
     if data.get("checker", "") not in ("", *CHECKERS):
         raise GcadError(f"{manifest}: checker must be one of {', '.join(CHECKERS)}")
+    time_limit = data.get("time_limit", 0)
+    if (
+        not isinstance(time_limit, int | float)
+        or isinstance(time_limit, bool)
+        or not 0 <= time_limit <= MAX_TIME_LIMIT
+    ):
+        raise GcadError(f"{manifest}: time_limit must be seconds, at most {MAX_TIME_LIMIT}")
     exts = data["extensions"]
     if (
         not isinstance(exts, list)
@@ -147,6 +161,7 @@ def load_kernel(folder: Path) -> Kernel:
         description=str(data.get("description", "")),
         start=str(data.get("start", "start")),
         checker=str(data.get("checker", "")),
+        time_limit=float(time_limit),
     )
 
 
