@@ -1,6 +1,6 @@
 # GCAD Studio — Requirements and Specification (MVE v0.1)
 
-Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 plan (M8 to M13, §12.2; AC-13 to AC-20, §10) was approved on 2026-10-27; M8 is implemented. M14 (ISO 10303 parametric exchange, §5.5) and M15 (PMI viewing), §12.3, with AC-21 to AC-30, are proposed and await approval. Repository: `GCADstudio/studio` (public, AGPL-3.0).
+Status: approved 2026-10-27 with the recommended §11 decisions (Python core + local browser UI, Lark EBNF, the §8.3 treatment, `minscad` as lead language). Milestones M0 to M7 are implemented; see the README for what works today. M7 is the web deployment mode (§4.1). The v0.2 plan (M8 to M13, §12.2; AC-13 to AC-20, §10) was approved on 2026-10-27; M8 is implemented. M14 (ISO 10303 parametric exchange, §5.5) and M15 (PMI viewing), §12.3, with AC-21 to AC-30, are implemented (merged 2026-10-28). Repository: `GCADstudio/studio` (public, AGPL-3.0).
 
 ## 1. Product in one paragraph
 
@@ -197,7 +197,7 @@ FR-G1 (M): the canonical graph JSON (sorted keys, normalized numbers) has a stab
 | FR-B7 | M | Back-end `auto` (the default, added in M3) uses B for formats that need exact geometry and M for mesh formats, so mesh exports keep Manifold's per-triangle provenance and speed. `--backend` overrides it. |
 | FR-B6 | S | `projection` with hidden-line removal on back-end B for 2D drawing views. |
 
-### 5.5 ISO 10303 parametric exchange (M14, proposed)
+### 5.5 ISO 10303 parametric exchange (M14)
 
 The design, its decisions and its verification are in [docs/design/iso10303-kernel.md](design/iso10303-kernel.md); the status of every entity is in [docs/design/iso10303-coverage.tsv](design/iso10303-coverage.tsv).
 
@@ -345,7 +345,7 @@ v0.2 (proposed, §12.2):
 19. **AC-19 More formats:** PLY, OFF and 3MF re-read with trimesh as in AC-3 and are byte-reproducible as in AC-7. A tetrahedral UNV re-reads with Gmsh with a total element volume within 0.5 % of AC-2. The DWG plug-in, where a converter is installed, converts DWG back to DXF with every vertex equal to the source; this check is local only.
 20. **AC-20 Release on PyPI:** `pip install gcad-studio==0.2.0` from PyPI into a clean environment works on all six CI runners and `gcad --version` prints 0.2.0 (NFR-4).
 
-ISO 10303 parametric exchange (M14, proposed, §5.5):
+ISO 10303 parametric exchange (M14, §5.5):
 
 21. **AC-21 Grammar and coverage:** `gcad kernel check` passes for `iso10303`; the coverage matrix test passes with no entity of the AP242 long form or the resource parts unstatused and every supported entity in a fixture; locally, with the user's copy of ISO 10303-21, the kernel's grammar and the standard's WSN accept and reject the same sentences.
 22. **AC-22 AC-2 in Part 42:** the AC-2 part written as ISO 10303-42 CSG with an ISO 10303-108 parameter for the hole diameter exports to B-rep STEP that re-reads in OpenCASCADE with volume 12,000 − 160π mm³ within 1e-6 relative; with the parameter at 10 mm, 12,000 − 250π.
@@ -354,7 +354,7 @@ ISO 10303 parametric exchange (M14, proposed, §5.5):
 25. **AC-25 Negative controls:** a syntax error, a dangling `#n`, a duplicate `#n`, a reference cycle, a WHERE-rule violation, an entity outside the schema and an unsupported ISO 10303-111 feature each give their exact diagnostic at the instance.
 26. **AC-26 Round trip and determinism:** every bundled minscad, csg and parts example exports as parametric STEP and reads back to the same graph hash, or is refused with its stated reason; two processes write byte-identical files.
 
-PMI viewing (M15, proposed, §5.5 FR-I9):
+PMI viewing (M15, §5.5 FR-I9):
 
 27. **AC-27 NIST CTC-01:** the bundled `nist_ctc_01_asme1_ap242-e1.stp` gives 23 drawn callouts, 1 saved view, 6 geometric tolerances, 12 dimensions, 3 datums, 3 datum features and 2 datum systems; Position.1 reads `⌖ 0.75 mm | A | B | C` on faces #805 and #801 and is linked to its callout #628; the graph hash is the one the file has without PMI.
 28. **AC-28 NIST CTC-05:** the bundled `nist_ctc_05_asme1_ap242-e1.stp` (polyline PMI, inches) gives 22 drawn callouts and the saved views MBD_A and MBD_B, in millimetres in model coordinates.
@@ -383,7 +383,7 @@ PMI viewing (M15, proposed, §5.5 FR-I9):
 | M6 | Determinism, limits, docs, first release `v0.1.0` | AC-6, AC-7, AC-8 |
 | M7 | Web deployment mode (§4.1): Pyodide worker, Manifold WebAssembly binding, static-site build, GitHub Pages workflow | AC-9 to AC-12 in CI (headless Chrome); screenshots in both themes |
 
-v0.1.0 was released on 2026-10-27 as a GitHub Release (wheel and sdist). The PyPI job is built but switched off, so NFR-4's `pip install gcad-studio` is not met yet. v0.2.0a1, a GitHub pre-release on 2026-10-28, adds M7, M8 and M14 and the `elmergrid` and `blockmesh` kernels; M9 to M13 remain for v0.2.0.
+v0.1.0 was released on 2026-10-27 as a GitHub Release (wheel and sdist). The PyPI job is built but switched off, so NFR-4's `pip install gcad-studio` is not met yet. v0.2.0a1, a GitHub pre-release on 2026-10-28, adds M7, M8 and M14 and the `elmergrid` and `blockmesh` kernels; v0.2.0a2, the same day, adds M15. M9 to M13 remain for v0.2.0.
 
 ### 12.2 v0.2 (approved 2026-10-27)
 
@@ -419,7 +419,7 @@ For review:
 3. **M13 needs the owner's two steps** on pypi.org and in the repository settings.
 4. **Not in v0.2:** assemblies and PMI, fillets and chamfers, CAM, CAE decks, the node editor, an LSP bridge, ACIS, PHIGS and 3D PDF.
 
-### 12.3 ISO 10303 (proposed 2026-10-27, awaiting approval)
+### 12.3 ISO 10303 (proposed 2026-10-27, implemented 2026-10-28)
 
 Alongside v0.2 and independent of it; each lands as one pull request.
 
