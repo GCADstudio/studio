@@ -23,7 +23,7 @@ A model that runs away stops with a message instead of hanging: at 10 s of evalu
 
 ### In the browser, nothing installed
 
-The same studio also runs as a static web site ([SPEC §4.1](docs/SPEC.md#41-web-deployment-mode-m7)): Python runs inside the page through [Pyodide](https://pyodide.org) in a Web Worker, and the mesh back-end is Manifold's own WebAssembly build. Your files stay in the browser (with Upload and Download in `Ctrl+O`), and nothing is sent anywhere. Exact B-rep needs OpenCASCADE, which has no WebAssembly build, so STEP and IGES need the local install; the other twelve formats work. Build the site and serve it with any static file server:
+The same studio also runs as a static web site, live at **[gcadstudio.github.io/studio](https://gcadstudio.github.io/studio/)** ([SPEC §4.1](docs/SPEC.md#41-web-deployment-mode-m7)): Python runs inside the page through [Pyodide](https://pyodide.org) in a Web Worker, and the mesh back-end is Manifold's own WebAssembly build. Your files stay in the browser (with Upload and Download in `Ctrl+O`), and nothing is sent anywhere. Exact B-rep needs OpenCASCADE, which has no WebAssembly build, so STEP and IGES need the local install; the other twelve formats work. Build the site and serve it with any static file server:
 
 ```bash
 python tools/build_site.py --out site    # fetches the pinned, checksummed Pyodide and Manifold once
@@ -32,7 +32,7 @@ python -m http.server -d site 8000       # then open http://127.0.0.1:8000
 
 ## Status
 
-Pre-alpha, version 0.2.0a1, a pre-release: milestones M0 to M8 and M14 of [the plan](docs/SPEC.md#12-delivery-plan) are done; M9 to M13 are next. What changed is in [CHANGELOG.md](CHANGELOG.md).
+Pre-alpha, version 0.2.0a2, a pre-release: milestones M0 to M8, M14 and M15 of [the plan](docs/SPEC.md#12-delivery-plan) are done; M9 to M13 are next. What changed is in [CHANGELOG.md](CHANGELOG.md).
 
 | Works now |
 |---|
@@ -48,8 +48,8 @@ Pre-alpha, version 0.2.0a1, a pre-release: milestones M0 to M8 and M14 of [the p
 | 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM |
 | `gcad` command line, headless |
 | The web studio: the same UI and Python core in the browser (Pyodide), a static site for GitHub Pages; no STEP or IGES there |
-| Kernel `iso10303` (`.stp`, `.step`, `.p21`, proposed M14): STEP files with ISO 10303-42 CSG, -55 histories, -108 parameters, -111 holes and pockets, -112 sketches; explicit B-rep through OpenCASCADE; checked against the AP242 long form with every rule evaluated. Export `step-parametric` writes models back as parametric STEP. [Coverage, entity by entity](docs/design/iso10303-coverage.tsv) |
-| PMI in STEP AP242 (proposed M15): graphical PMI drawn, semantic PMI (tolerances, dimensions, datums) listed with the faces it applies to, saved views; in the studio and the browser |
+| Kernel `iso10303` (`.stp`, `.step`, `.p21`, M14): STEP files with ISO 10303-42 CSG, -55 histories, -108 parameters, -111 holes and pockets, -112 sketches; explicit B-rep through OpenCASCADE; checked against the AP242 long form with every rule evaluated. Export `step-parametric` writes models back as parametric STEP. [Coverage, entity by entity](docs/design/iso10303-coverage.tsv) |
+| PMI in STEP AP242 (M15): graphical PMI drawn, semantic PMI (tolerances, dimensions, datums) listed with the faces it applies to, saved views; in the studio and the browser |
 
 Run `gcad formats` to see every format and which back-ends are available.
 
@@ -68,7 +68,7 @@ The design, the grammar's trace to the standard and what is verified how are in 
 
 ### PMI, GD&T and MBD
 
-A STEP AP242 file's annotations open with it (proposed M15): the callouts are drawn on the model, and the panel beside the viewer lists the saved views, the geometric tolerances, dimensions and datums. Each row has a check box for its drawing, opens its `#n` line in the editor and lights up the faces it applies to; clicking a face of the part marks the rows that apply to it. In the browser the part's B-rep is left out (it needs OpenCASCADE) and the PMI is still shown. Two of NIST's PMI test files are bundled as examples (`Ctrl+O`, type `nist`). `gcad eval part.stp --dump annotations` lists the same in a terminal.
+A STEP AP242 file's annotations open with it (M15): the callouts are drawn on the model, and the panel beside the viewer lists the saved views, the geometric tolerances, dimensions and datums. Each row has a check box for its drawing, opens its `#n` line in the editor and lights up the faces it applies to; clicking a face of the part marks the rows that apply to it. In the browser the part's B-rep is left out (it needs OpenCASCADE) and the PMI is still shown: try it [on the web studio](https://gcadstudio.github.io/studio/#open=example:iso10303/examples/nist_ctc_01_asme1_ap242-e1.stp). Two of NIST's PMI test files are bundled as examples (`Ctrl+O`, type `nist`). `gcad eval part.stp --dump annotations` lists the same in a terminal.
 
 ![The CTC-01 test part with its PMI in the studio](docs/studio-pmi.png)
 
@@ -79,7 +79,7 @@ Python 3.11 or newer on Windows, macOS or Linux, x86_64 or arm64. No compiler or
 From a release, with the wheel from [GitHub Releases](https://github.com/GCADstudio/studio/releases):
 
 ```bash
-pip install gcad_studio-0.2.0a1-py3-none-any.whl
+pip install gcad_studio-0.2.0a2-py3-none-any.whl
 ```
 
 From a clone, for development:
