@@ -245,7 +245,9 @@ jobs:
             git -C "$RUNNER_TEMP/openfoam" checkout
             tutorials="$RUNNER_TEMP/openfoam/tutorials"
           fi
-          echo "tutorials: $tutorials ($(find "$tutorials" -name 'blockMeshDict*' | wc -l) dictionaries)"
+          count=$(find "$tutorials" -name 'blockMeshDict*' | wc -l)
+          echo "tutorials: $tutorials ($count dictionaries)"
+          if [ "$count" -eq 0 ]; then echo "no blockMeshDict under $tutorials"; exit 1; fi
           echo "GCAD_FOAM_TUTORIALS=$tutorials" >> "$GITHUB_ENV"
       - run: python -m pip install -e ".[dev]"
       - name: The oracle's numbers for the kernel's examples
