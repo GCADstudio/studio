@@ -86,6 +86,7 @@ class Mesh:
         tri_verts: np.ndarray,
         run_index: np.ndarray | None = None,
         run_original_id: np.ndarray | None = None,
+        face_id: np.ndarray | None = None,
     ) -> None:
         self.vert_properties = np.asarray(vert_properties)
         self.tri_verts = np.asarray(tri_verts)
@@ -93,6 +94,7 @@ class Mesh:
         self.run_original_id = (
             run_original_id if run_original_id is not None else np.zeros(0, dtype=np.uint32)
         )
+        self.face_id = face_id if face_id is not None else np.zeros(0, dtype=np.uint32)
 
 
 class CrossSection(_Owned):
@@ -162,6 +164,14 @@ class Manifold(_Owned):
                 "vertProperties": _array(props, "<f4", js.Float32Array),
                 "triVerts": _array(mesh.tri_verts, "<u4", js.Uint32Array),
             }
+            # runs and face ids, as manifold3d takes them: an imported B-rep keeps its faces
+            for key, values in (
+                ("runIndex", mesh.run_index),
+                ("runOriginalID", mesh.run_original_id),
+                ("faceID", mesh.face_id),
+            ):
+                if len(values):
+                    options[key] = _array(np.asarray(values), "<u4", js.Uint32Array)
             js_mesh = _wasm.Mesh.new(to_js(options, dict_converter=js.Object.fromEntries))
             try:
                 _js = _wasm.Manifold.new(js_mesh)
@@ -250,6 +260,10 @@ class Manifold(_Owned):
     def original_id(self) -> int:
         return int(self._js.originalID())
 
+    @staticmethod
+    def reserve_ids(n: int) -> int:
+        return int(_wasm.Manifold.reserveIDs(int(n)))
+
     def status(self) -> Error:
         return self._failed or Error(self._js.status())
 
@@ -275,4 +289,5 @@ class Manifold(_Owned):
             _numpy(m.triVerts, "<u4").reshape(-1, 3),
             _numpy(m.runIndex, "<u4"),
             _numpy(m.runOriginalID, "<u4"),
+            _numpy(m.faceID, "<u4"),
         )

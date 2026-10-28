@@ -28,6 +28,16 @@ files = ["manifold.js", "manifold.wasm", "LICENSE"]
 license = "Apache-2.0"
 source = "https://github.com/elalish/manifold/tree/v3.5.4"
 
+# OpenCASCADE compiled to WebAssembly: reads and tessellates explicit B-rep STEP in the browser.
+# Loaded by the worker only when a STEP file is evaluated. LGPL-2.1: a separate, replaceable file.
+[occt]
+version = "0.0.23"
+url = "https://registry.npmjs.org/occt-import-js/-/occt-import-js-0.0.23.tgz"
+sha256 = "eaab9ca7bf02799360d8fc70468dc8bf78eb2073c3fafb1ff982006e558fc1f3"
+files = ["dist/occt-import-js.js", "dist/occt-import-js.wasm", "dist/license.occt-import-js.txt", "dist/license.occt.txt"]
+license = "LGPL-2.1 (occt-import-js and OpenCASCADE)"
+source = "https://github.com/kovacsv/occt-import-js/tree/v0.0.23"
+
 # Pure-Python wheels that Pyodide does not ship, from PyPI.
 [[wheels]]
 name = "lark"

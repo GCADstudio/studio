@@ -246,7 +246,7 @@ class Studio:
         file: str | None = None,
         diagnostics: list[Diagnostic] | None = None,
     ) -> dict[str, object]:
-        # Without OpenCASCADE (the browser) an imported B-rep is left out with a warning, so
+        # Without any OpenCASCADE (Windows on ARM) an imported B-rep is left out with a warning, so
         # the rest of the model and its annotations still show.
         from gcad.backends.manifold_backend import ManifoldBackend
 

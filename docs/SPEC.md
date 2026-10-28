@@ -359,7 +359,7 @@ PMI viewing (M15, §5.5 FR-I9):
 27. **AC-27 NIST CTC-01:** the bundled `nist_ctc_01_asme1_ap242-e1.stp` gives 23 drawn callouts, 1 saved view, 6 geometric tolerances, 12 dimensions, 3 datums, 3 datum features and 2 datum systems; Position.1 reads `⌖ 0.75 mm | A | B | C` on faces #805 and #801 and is linked to its callout #628; the graph hash is the one the file has without PMI.
 28. **AC-28 NIST CTC-05:** the bundled `nist_ctc_05_asme1_ap242-e1.stp` (polyline PMI, inches) gives 22 drawn callouts and the saved views MBD_A and MBD_B, in millimetres in model coordinates.
 29. **AC-29 Faces:** with OpenCASCADE, every face of CTC-01's B-rep is a mesh group labelled with its `ADVANCED_FACE` `#n`, and every face a PMI item targets is one of them; the studio sends each such face with the span of its instance.
-30. **AC-30 Both studios:** the PMI of CTC-01 is seen in the native studio and in the web studio, where OpenCASCADE is absent: the B-rep is left out with a warning and the annotations are still drawn and listed.
+30. **AC-30 Both studios:** CTC-01, its part and its PMI, is seen in the native studio and in the web studio; in the browser OpenCASCADE's WebAssembly build reads the B-rep, to the native volume within 1e-4 and with the same `#n` on every face. Where no OpenCASCADE exists at all, the B-rep is left out with a warning and the annotations are still drawn and listed.
 
 ## 11. Decisions to confirm before development
 

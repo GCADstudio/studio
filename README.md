@@ -23,7 +23,7 @@ A model that runs away stops with a message instead of hanging: at 10 s of evalu
 
 ### In the browser, nothing installed
 
-The same studio also runs as a static web site, live at **[gcadstudio.github.io/studio](https://gcadstudio.github.io/studio/)** ([SPEC §4.1](docs/SPEC.md#41-web-deployment-mode-m7)): Python runs inside the page through [Pyodide](https://pyodide.org) in a Web Worker, and the mesh back-end is Manifold's own WebAssembly build. Your files stay in the browser (with Upload and Download in `Ctrl+O`), and nothing is sent anywhere. Exact B-rep needs OpenCASCADE, which has no WebAssembly build, so STEP and IGES need the local install; the other twelve formats work. Build the site and serve it with any static file server:
+The same studio also runs as a static web site, live at **[gcadstudio.github.io/studio](https://gcadstudio.github.io/studio/)** ([SPEC §4.1](docs/SPEC.md#41-web-deployment-mode-m7)): Python runs inside the page through [Pyodide](https://pyodide.org) in a Web Worker, and the mesh back-end is Manifold's own WebAssembly build. Your files stay in the browser (with Upload and Download in `Ctrl+O`), and nothing is sent anywhere. STEP files with explicit B-rep open there too, read by OpenCASCADE's WebAssembly build (occt-import-js, loaded only when a STEP file is opened). Writing STEP and IGES needs OpenCASCADE's modelling back-end, so those two exports need the local install; the other twelve formats work. Build the site and serve it with any static file server:
 
 ```bash
 python tools/build_site.py --out site    # fetches the pinned, checksummed Pyodide and Manifold once
@@ -68,7 +68,7 @@ The design, the grammar's trace to the standard and what is verified how are in 
 
 ### PMI, GD&T and MBD
 
-A STEP AP242 file's annotations open with it (M15): the callouts are drawn on the model, and the panel beside the viewer lists the saved views, the geometric tolerances, dimensions and datums. Each row has a check box for its drawing, opens its `#n` line in the editor and lights up the faces it applies to; clicking a face of the part marks the rows that apply to it. In the browser the part's B-rep is left out (it needs OpenCASCADE) and the PMI is still shown: try it [on the web studio](https://gcadstudio.github.io/studio/#open=example:iso10303/examples/nist_ctc_01_asme1_ap242-e1.stp). Two of NIST's PMI test files are bundled as examples (`Ctrl+O`, type `nist`). `gcad eval part.stp --dump annotations` lists the same in a terminal.
+A STEP AP242 file's annotations open with it (M15): the callouts are drawn on the model, and the panel beside the viewer lists the saved views, the geometric tolerances, dimensions and datums. Each row has a check box for its drawing, opens its `#n` line in the editor and lights up the faces it applies to; clicking a face of the part marks the rows that apply to it. The same works in the browser, where OpenCASCADE's WebAssembly build reads the part: try it [on the web studio](https://gcadstudio.github.io/studio/#open=example:iso10303/examples/nist_ctc_01_asme1_ap242-e1.stp). Two of NIST's PMI test files are bundled as examples (`Ctrl+O`, type `nist`). `gcad eval part.stp --dump annotations` lists the same in a terminal.
 
 ![The CTC-01 test part with its PMI in the studio](docs/studio-pmi.png)
 

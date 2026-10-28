@@ -97,7 +97,7 @@ ignore_missing_imports = true
 follow_imports = "skip"
 
 # Only inside Pyodide (the web studio, SPEC §4.1): its FFI, the JS global scope, and the
-# Manifold WebAssembly module the worker registers.
+# Manifold and OpenCASCADE WebAssembly modules the worker registers.
 [[tool.mypy.overrides]]
-module = ["pyodide", "pyodide.*", "js", "_gcad_manifold"]
+module = ["pyodide", "pyodide.*", "js", "_gcad_manifold", "_gcad_occt"]
 ignore_missing_imports = true

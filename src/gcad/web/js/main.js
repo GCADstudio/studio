@@ -146,7 +146,7 @@ const fmt = (v) => number.format(v).replace(/,/g, " ");
 function showModelCard(result) {
   const card = $("#model-card");
   card.replaceChildren();
-  // Nothing built (a B-rep left out in the browser, only its annotations shown): no stats.
+  // Nothing built (a B-rep left out where no OpenCASCADE exists, only its PMI shown): no stats.
   card.hidden = !result.bounds;
   if (!result.bounds) return;
   const [lo, hi] = result.bounds;
