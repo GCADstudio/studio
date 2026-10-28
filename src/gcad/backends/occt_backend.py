@@ -56,7 +56,7 @@ except ImportError:  # pragma: no cover - OCP 7.x
 
 from gcad.core.graph import ATTRIBUTE_OPS, Graph, Node, default_tolerance, node_matrix
 from gcad.diagnostics import GcadError, Span
-from gcad.mesh import RGBA, Mesh, MeshGroup
+from gcad.mesh import RGBA, Mesh, MeshGroup, weld
 
 POLYGONAL_FN_MAX = 16  # an explicit $fn up to this makes a polygon, as in OpenSCAD
 
@@ -199,16 +199,7 @@ class OcctModel:
                 triangles.append((base + a - 1, base + b - 1, base + c - 1))
                 tri_groups.append(g)
         # Faces carry their own copies of shared edge nodes: weld them.
-        raw = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-        key = np.round(raw / max(self.tolerance * 1e-4, 1e-9)).astype(np.int64)
-        _, first, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
-        order = np.argsort(first)
-        rank = np.empty_like(order)
-        rank[order] = np.arange(len(order))
-        vertices = raw[first[order]]
-        tris = rank[inverse.ravel()][np.asarray(triangles, dtype=np.int64).reshape(-1, 3)]
-        keep = (tris[:, 0] != tris[:, 1]) & (tris[:, 1] != tris[:, 2]) & (tris[:, 0] != tris[:, 2])
-        tris = tris[keep]
+        vertices, tris, keep = weld(np.asarray(points), np.asarray(triangles), self.tolerance)
         tri_group = np.asarray(tri_groups, dtype=np.int64).reshape(-1)[keep]
         used = sorted(set(tri_group.tolist()))
         if used != list(range(len(groups))):  # drop groups left without triangles

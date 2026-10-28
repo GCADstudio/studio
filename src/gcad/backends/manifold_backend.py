@@ -194,30 +194,36 @@ class _Realizer:
     def imported(self, node: Node, color: RGBA | None) -> mf.Manifold:
         """Geometry handed over as a file (an `import` node). A triangle mesh is read as it
         is. Explicit B-rep (STEP) is read and tessellated by OpenCASCADE, as for any mesh
-        export from back-end B; without OpenCASCADE (the web studio, Windows on ARM) nothing
-        here can read it. Each B-rep face keeps its own id through booleans, labelled with the
-        file entity it came from."""
+        export from back-end B: natively through OCP, in the web studio through its WebAssembly
+        build. Without either (Windows on ARM) nothing here can read it. Each B-rep face keeps
+        its own id through booleans, labelled with the file entity it came from."""
         fmt, digest = str(node.arg("format")), str(node.arg("data"))
         if digest not in self.blobs:
             raise GcadError("the data this import reads is not in the graph", node.span)
         if fmt != "step":
             return self.tag(self.imported_mesh(node, fmt, digest), node, color)
+        entity = int(node.num("entity"))
         try:
             from gcad.backends.occt_backend import OcctModel, read_step, step_face_names
         except ImportError:
-            error = GcadError(
-                "explicit B-rep geometry is read by OpenCASCADE (back-end occt), which is not "
-                "available here; the browser studio shows CSG and procedural models only",
-                node.span,
-            )
-            if self.skip_imports:
-                self.skipped.append(error)
-                return mf.Manifold()
-            raise error from None
-        entity = int(node.num("entity"))
-        shape = read_step(self.blobs[digest], entity, digest, node.span)
-        names = step_face_names(digest, entity)
-        mesh = OcctModel(shape, 3, self.tolerance, node.id, None, None, names).mesh()
+            from gcad.backends import occt_js
+
+            if occt_js.available():
+                mesh = occt_js.read_step(self.blobs[digest], self.tolerance, node.id, node.span)
+            else:
+                error = GcadError(
+                    "explicit B-rep geometry is read by OpenCASCADE (back-end occt), which is "
+                    "not available here",
+                    node.span,
+                )
+                if self.skip_imports:
+                    self.skipped.append(error)
+                    return mf.Manifold()
+                raise error from None
+        else:
+            shape = read_step(self.blobs[digest], entity, digest, node.span)
+            names = step_face_names(digest, entity)
+            mesh = OcctModel(shape, 3, self.tolerance, node.id, None, None, names).mesh()
         original = int(mf.Manifold.reserve_ids(1))
         try:
             m = mf.Manifold(

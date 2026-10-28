@@ -53,3 +53,21 @@ class Mesh:
         group_color = np.array([colors.index(g.color) for g in self.groups], dtype=np.int64)
         tri_color = group_color[self.tri_group] if len(self.groups) else np.zeros(0, np.int64)
         return [(c, np.flatnonzero(tri_color == i)) for i, c in enumerate(colors)]
+
+
+def weld(
+    points: np.ndarray, triangles: np.ndarray, tolerance: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Merge points closer than a ten-thousandth of the tolerance: a B-rep's faces are meshed
+    each with its own copy of their shared edges. Returns the vertices in order of first use,
+    the triangles on them, and which input triangles were kept (not collapsed to a line)."""
+    raw = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    key = np.round(raw / max(tolerance * 1e-4, 1e-9)).astype(np.int64)
+    _, first, inverse = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    order = np.argsort(first)
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+    vertices = raw[first[order]]
+    tris = rank[inverse.ravel()][np.asarray(triangles, dtype=np.int64).reshape(-1, 3)]
+    keep = (tris[:, 0] != tris[:, 1]) & (tris[:, 1] != tris[:, 2]) & (tris[:, 0] != tris[:, 2])
+    return vertices, tris[keep], keep
