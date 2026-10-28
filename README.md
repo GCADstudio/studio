@@ -32,7 +32,7 @@ python -m http.server -d site 8000       # then open http://127.0.0.1:8000
 
 ## Status
 
-Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-delivery-plan) are done. What changed is in [CHANGELOG.md](CHANGELOG.md).
+Pre-alpha, version 0.2.0a1, a pre-release: milestones M0 to M8 and M14 of [the plan](docs/SPEC.md#12-delivery-plan) are done; M9 to M13 are next. What changed is in [CHANGELOG.md](CHANGELOG.md).
 
 | Works now |
 |---|
@@ -41,8 +41,8 @@ Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-deli
 | Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python |
 | Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) |
 | Kernel `elmergrid` (`.grd`): ElmerGrid's structured-mesh format from [Elmer FEM](https://www.elmerfem.org), MATC expressions included, one solid or region per material; written only as grammar, rewrite rules and a GCore prelude, and checked against ElmerGrid on 441 of the 531 distinct `.grd` files in Elmer's sources |
-| Kernel `blockmesh` (OpenFOAM's `system/blockMeshDict`): the solid of a CFD block mesh, one coloured part per zone, in mm. On `master`, not in 0.1.0 |
-| Process kernels: any language with a program of its own; bundled `openscad` (`.scad`, your installed OpenSCAD) and `cadquery` (`.cq.py`, CadQuery in its own environment). On `master`, not in 0.1.0 |
+| Kernel `blockmesh` (OpenFOAM's `system/blockMeshDict`): the solid of a CFD block mesh, one coloured part per zone, in mm |
+| Process kernels: any language with a program of its own; bundled `openscad` (`.scad`, your installed OpenSCAD) and `cadquery` (`.cq.py`, CadQuery in its own environment) |
 | Exact B-rep back-end on [OpenCASCADE](https://dev.opencascade.org); mesh back-end on [Manifold](https://github.com/elalish/manifold); both CPU only |
 | 3D export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV |
 | 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM |
@@ -72,7 +72,7 @@ Python 3.11 or newer on Windows, macOS or Linux, x86_64 or arm64. No compiler or
 From a release, with the wheel from [GitHub Releases](https://github.com/GCADstudio/studio/releases):
 
 ```bash
-pip install gcad_studio-0.1.0-py3-none-any.whl
+pip install gcad_studio-0.2.0a1-py3-none-any.whl
 ```
 
 From a clone, for development:

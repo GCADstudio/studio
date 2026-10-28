@@ -373,7 +373,7 @@ ISO 10303 parametric exchange (M14, proposed, §5.5):
 | M6 | Determinism, limits, docs, first release `v0.1.0` | AC-6, AC-7, AC-8 |
 | M7 | Web deployment mode (§4.1): Pyodide worker, Manifold WebAssembly binding, static-site build, GitHub Pages workflow | AC-9 to AC-12 in CI (headless Chrome); screenshots in both themes |
 
-v0.1.0 was released on 2026-10-27 as a GitHub Release (wheel and sdist). The PyPI job is built but switched off, so NFR-4's `pip install gcad-studio` is not met yet.
+v0.1.0 was released on 2026-10-27 as a GitHub Release (wheel and sdist). The PyPI job is built but switched off, so NFR-4's `pip install gcad-studio` is not met yet. v0.2.0a1, a GitHub pre-release on 2026-10-28, adds M7, M8 and M14 and the `elmergrid` and `blockmesh` kernels; M9 to M13 remain for v0.2.0.
 
 ### 12.2 v0.2 (approved 2026-10-27)
 
