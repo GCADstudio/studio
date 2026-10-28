@@ -196,8 +196,35 @@ def test_curved_blocks_converge_to_the_true_solid() -> None:
 
 # Produced by OpenFOAM's blockMesh in the CI job `blockmesh` (tests/blockmesh_oracle.py on the
 # examples; volumes from the written polyMesh, in m^3 and m). Provenance: see GOLDEN_SOURCE.
-GOLDEN_SOURCE = ""
-GOLDEN: dict[str, dict[str, object]] = {}
+GOLDEN_SOURCE = (
+    "GitHub Actions run 40607401714, job blockmesh (ubuntu-24.04): Ubuntu package openfoam "
+    "1912.200626-2build3, OpenFOAM v1912 patch 200626 (OpenFOAM.com)"
+)
+GOLDEN: dict[str, dict[str, object]] = {
+    "box": {
+        "volume": 0.00010000000000000005,
+        "lo": [0.0, 0.0, 0.0],
+        "hi": [0.1, 0.1, 0.010000000000000004],
+    },
+    "lshape": {
+        "volume": 1.9999999999999998e-05,
+        "lo": [0.0, 0.0, 0.0],
+        "hi": [0.06, 0.06, 0.010000000000000002],
+        "zones": {"corner": 4e-06, "arms": 1.6e-05},
+    },
+    "wedge": {
+        "volume": 2.2515233543145078e-06,
+        "lo": [0.0, 0.0, -0.0008723877473067202],
+        "hi": [0.15000000000000002, 0.019980964431637202, 0.0008723877473067202],
+        "zones": {"pipe": 1.7431148549531676e-06, "nozzle": 5.084084993613401e-07},
+    },
+    "annulus": {
+        "volume": 0.00011768864359176749,
+        "lo": [0.0, 0.0, 0.0],
+        "hi": [0.1, 0.1, 0.020000000000000004],
+        "zones": {"inner": 4.9036934829903215e-05, "outer": 6.865170876186425e-05},
+    },
+}
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED))
@@ -209,10 +236,10 @@ def test_examples_match_blockmesh_golden_numbers(name: str) -> None:
     if name == "annulus":
         # blockMesh cuts each 45 degree arc into 10 cells: 20 chords over the quarter.
         assert gold["volume"] == pytest.approx(annulus(20, 0.05, 0.1), rel=1e-9)
-        assert (
-            abs(volume - gold["volume"]) / volume
-            <= (math.radians(7.5) ** 2 + math.radians(4.5) ** 2) / 6
-        )
+        assert gold["zones"]["inner"] == pytest.approx(annulus(20, 0.05, 0.075), rel=1e-9)
+        tolerance = (math.radians(7.5) ** 2 + math.radians(4.5) ** 2) / 6
+        assert abs(volume - gold["volume"]) / volume <= tolerance
+        assert zones == pytest.approx(gold["zones"], rel=tolerance)
         return
     assert volume == pytest.approx(gold["volume"], rel=1e-9)
     assert zones == pytest.approx(gold.get("zones") or {"block 0": gold["volume"]}, rel=1e-9)
@@ -258,18 +285,26 @@ def test_curved_example_matches_blockmesh_live(tmp_path: Path) -> None:
 
 
 # Small dictionaries in the dialect of the OpenFOAM that CI installs (OpenFOAM.com).
+# Each with the oldest OpenFOAM.com release seen to read it: v1912, the Ubuntu 24.04 and Debian
+# package, does not know `arc ... origin` or `-$name` (it stops at "origin" and at "-").
 LIVE_CASES = {
-    "arc-origin": "arc_origin",
-    "negated-macros": "negated",
-    "graded-non-plane": "twisted",
+    "arc-origin": ("arc_origin", 2000),
+    "negated-macros": ("negated", 2000),
+    "graded-non-plane": ("twisted", 0),
 }
 
 
 @pytest.mark.parametrize("name", sorted(LIVE_CASES))
 def test_features_match_blockmesh_live(name: str, tmp_path: Path) -> None:
-    text = globals()[LIVE_CASES[name].upper()]
+    variable, newer_than = LIVE_CASES[name]
+    text = globals()[variable.upper()]
     cmd = blockmesh()
-    mesh = oracle.run(text, tmp_path, cmd)
+    try:
+        mesh = oracle.run(text, tmp_path, cmd)
+    except oracle.Failed as exc:
+        if 0 < exc.version < newer_than:
+            pytest.skip(f"OpenFOAM v{exc.version} predates this syntax")
+        raise
     curved = "arc" in text
     compare(text, mesh, (math.radians(7.5) ** 2 + math.radians(9) ** 2) / 6 if curved else 1e-9)
 

@@ -65,11 +65,24 @@ def command(env: str = "GCAD_BLOCKMESH") -> list[str] | None:
     return shlex.split(value, posix=os.name != "nt") if value else None
 
 
+class Failed(RuntimeError):
+    """blockMesh refused the dictionary; `version` is OpenFOAM's (1912 for v1912), or 0."""
+
+    def __init__(self, log: str) -> None:
+        super().__init__(f"blockMesh failed:\n{log[-3000:]}")
+        m = re.search(r"OPENFOAM=(\d+)", log)
+        self.version = int(m.group(1)) if m else 0
+
+
 def make_case(text: str, folder: Path) -> Path:
     (folder / "system").mkdir(parents=True, exist_ok=True)
     (folder / "constant").mkdir(exist_ok=True)
     (folder / "system" / "blockMeshDict").write_text(text, encoding="utf-8")
     (folder / "system" / "controlDict").write_text(CONTROL_DICT, encoding="utf-8")
+    # checkMesh reads these, though it solves nothing
+    for name in ("fvSchemes", "fvSolution"):
+        header = CONTROL_DICT.split("}")[0].replace("controlDict", name) + "}\n"
+        (folder / "system" / name).write_text(header, encoding="utf-8")
     return folder
 
 
@@ -81,7 +94,7 @@ def run(text: str, folder: Path, blockmesh: list[str] | None = None, zones: bool
     proc = subprocess.run(cmd, cwd=folder, capture_output=True, text=True, timeout=600)
     log = proc.stdout + proc.stderr
     if proc.returncode != 0 or "FOAM FATAL" in log:
-        raise RuntimeError(f"blockMesh failed:\n{log[-3000:]}")
+        raise Failed(log)
     mesh = read_mesh(folder / "constant" / "polyMesh", zones)
     mesh.log = log
     return mesh
@@ -212,7 +225,12 @@ def main(argv: list[str]) -> int:
             }
             if checkmesh:
                 proc = subprocess.run(checkmesh, cwd=tmp, capture_output=True, text=True)
-                row["checkMesh"] = checkmesh_numbers(proc.stdout)
+                row["checkMesh"] = checkmesh_numbers(proc.stdout) or {
+                    "error": (proc.stdout + proc.stderr)[-800:]
+                }
+            m = re.search(r"OPENFOAM=(\d+)\s+patch=(\d+)", mesh.log)
+            if m:
+                row["openfoam"] = f"v{m.group(1)} patch {m.group(2)}"
             print(json.dumps(row))
     return 0
 

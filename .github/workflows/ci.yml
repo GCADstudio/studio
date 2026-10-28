@@ -227,12 +227,20 @@ jobs:
           "$wrapper" bash -c 'command -v blockMesh && echo "WM_PROJECT_VERSION=$WM_PROJECT_VERSION"'
           echo "GCAD_BLOCKMESH=$wrapper blockMesh" >> "$GITHUB_ENV"
           echo "GCAD_CHECKMESH=$wrapper checkMesh" >> "$GITHUB_ENV"
-          version=$(dpkg -s openfoam | sed -n 's/^Version: \([0-9]*\).*/\1/p')
-          tutorials=$(find /usr/share/doc /usr/lib/openfoam /usr/share/openfoam -type d -name tutorials 2>/dev/null | head -n 1 || true)
-          if [ -z "$tutorials" ]; then
+          # 1912.200626-2build3 -> 1912.200626, the upstream release and patch date
+          version=$(dpkg -s openfoam | sed -n 's/^Version: \([0-9.]*\).*/\1/p')
+          found=$(find /usr/share/openfoam /usr/lib/openfoam /usr/share/doc/openfoam* -path '*/tutorials/*' -name blockMeshDict 2>/dev/null | head -n 1 || true)
+          if [ -n "$found" ]; then
+            tutorials="${found%%/tutorials/*}/tutorials"
+          else
             # The package ships no tutorials: take them from the same release, read-only.
-            git clone --depth 1 --filter=blob:none --no-checkout --branch "OpenFOAM-v$version" \
-              https://gitlab.com/openfoam/core/openfoam.git "$RUNNER_TEMP/openfoam"
+            for tag in "OpenFOAM-v$version" "OpenFOAM-v${version%%.*}"; do
+              if git clone --depth 1 --filter=blob:none --no-checkout --branch "$tag" \
+                  https://gitlab.com/openfoam/core/openfoam.git "$RUNNER_TEMP/openfoam"; then
+                echo "tutorials from tag $tag"
+                break
+              fi
+            done
             git -C "$RUNNER_TEMP/openfoam" sparse-checkout set --no-cone '/tutorials/**/blockMeshDict*'
             git -C "$RUNNER_TEMP/openfoam" checkout
             tutorials="$RUNNER_TEMP/openfoam/tutorials"
