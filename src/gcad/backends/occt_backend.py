@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover - OCP 7.x
     from OCP.TopTools import TopTools_ListOfShape
 
 from gcad.core.graph import ATTRIBUTE_OPS, Graph, Node, default_tolerance, node_matrix
-from gcad.diagnostics import GcadError
+from gcad.diagnostics import GcadError, Span
 from gcad.mesh import RGBA, Mesh, MeshGroup
 
 POLYGONAL_FN_MAX = 16  # an explicit $fn up to this makes a polygon, as in OpenSCAD
@@ -228,8 +228,45 @@ class OcctModel:
         return self.shape is None or bool(BRepCheck_Analyzer(self.shape).IsValid())
 
 
+_STEP_CACHE: dict[tuple[str, int], TopoDS_Shape] = {}
+
+
+def read_step(data: bytes, entity: int, digest: str, span: Span | None = None) -> TopoDS_Shape:
+    """The shape a STEP file carries: one entity (#n) of it, or everything (entity 0), as
+    OpenCASCADE reads it, in millimetres. Kept per file and entity for the session."""
+    import os
+    import tempfile
+
+    from OCP.IFSelect import IFSelect_RetDone
+    from OCP.STEPControl import STEPControl_Reader
+
+    key = (digest, entity)
+    if key in _STEP_CACHE:
+        return _STEP_CACHE[key]
+    fd, path = tempfile.mkstemp(suffix=".stp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        reader = STEPControl_Reader()
+        if reader.ReadFile(path) != IFSelect_RetDone:
+            raise GcadError("OpenCASCADE could not read the STEP data", span)
+        if entity != 0:
+            raise GcadError(
+                "OpenCASCADE reads a STEP file's shapes all at once, not one entity", span
+            )
+        reader.TransferRoots()
+        shape = reader.OneShape()
+    finally:
+        os.unlink(path)
+    if shape is None or shape.IsNull() or not _shapes(shape, TopAbs_FACE):
+        raise GcadError(f"OpenCASCADE found no faces in #{entity}", span)
+    _STEP_CACHE[key] = shape
+    return shape
+
+
 class _Builder:
-    def __init__(self) -> None:
+    def __init__(self, blobs: dict[str, bytes] | None = None) -> None:
+        self.blobs = blobs or {}
         self.ops = {
             "box": self.box,
             "sphere": self.sphere,
@@ -240,6 +277,7 @@ class _Builder:
             "polygon": self.polygon,
             "linear_extrude": self.linear_extrude,
             "rotate_extrude": self.rotate_extrude,
+            "import": self.import_,
         }
 
     def build(self, node: Node) -> TopoDS_Shape | None:
@@ -274,6 +312,12 @@ class _Builder:
                 )
             return merged
         return _transform(merged, m)
+
+    def import_(self, node: Node) -> TopoDS_Shape:
+        digest = str(node.arg("data"))
+        if digest not in self.blobs:
+            raise GcadError("the data this import reads is not in the graph", node.span)
+        return read_step(self.blobs[digest], int(node.num("entity")), digest, node.span)
 
     # -- 3D primitives ---------------------------------------------------------------------
 
@@ -471,7 +515,7 @@ class OcctBackend:
         tol = tolerance if tolerance is not None else default_tolerance(graph)
         if tol <= 0:
             raise GcadError("tessellation tolerance must be positive")
-        shape = _Builder().build(graph.root)
+        shape = _Builder(graph.blobs).build(graph.root)
         if shape is not None and not _shapes(shape, TopAbs_FACE):
             shape = None  # booleans can leave an empty compound
         color, name = _root_attributes(graph)

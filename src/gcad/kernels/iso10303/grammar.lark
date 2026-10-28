@@ -1,0 +1,61 @@
+// iso10303: the exchange structure of ISO 10303-21:2002 (clear text encoding).
+//
+// This grammar implements the WSN productions of ISO 10303-21:2002 Tables 1 to 4 (clauses 5.2,
+// 5.4, 5.5 and 6.3.3); docs/design/iso10303-kernel.md §1.2 traces every rule to its production
+// and lists each deviation with its reason. What a context-free grammar cannot say (which #n
+// exist, the header's order, the EXPRESS schema) is checked after parsing (§1.3).
+
+start: exchange_file
+
+exchange_file: _BEGIN header_section data _END
+
+header_section: _HEADER header_entity header_entity header_entity header_entity* _ENDSEC
+header_entity: KEYWORD "(" [parameter_list] ")" ";"
+
+data: data_section+
+data_section: _DATA ["(" section_parameters ")"] ";" instances _ENDSEC
+section_parameters: parameter_list
+instances: entity_instance*
+
+?entity_instance: INSTANCE "=" simple_record ";"                -> simple_instance
+                | INSTANCE "=" subsuper_record ";"              -> complex_instance
+simple_record: KEYWORD "(" [parameter_list] ")"
+subsuper_record: "(" partial_record+ ")"
+partial_record: KEYWORD "(" [parameter_list] ")"
+
+parameter_list: parameter ("," parameter)*
+?parameter: KEYWORD "(" parameter ")"                           -> typed_parameter
+          | "$"                                                 -> unset
+          | "*"                                                 -> omitted
+          | INTEGER
+          | REAL
+          | STRING
+          | INSTANCE
+          | ENUMERATION
+          | BINARY
+          | "(" [parameter ("," parameter)*] ")"                -> list
+
+// Special tokens (6.1). Each is one token, so no separator may fall inside "ENDSEC;"; the
+// priority makes "ENDSEC;" win over the keyword ENDSEC followed by a semicolon.
+_BEGIN.3: "ISO-10303-21;"
+_END.3: "END-ISO-10303-21;"
+_HEADER.3: "HEADER;"
+_ENDSEC.3: "ENDSEC;"
+_DATA.3: "DATA"
+
+// Tokens (Table 2). Keywords are capitals, digits and low lines, user-defined ones start with !.
+KEYWORD: /!?[A-Z_][A-Z0-9_]*/
+INSTANCE: /#[0-9]+/
+REAL.2: /[+-]?[0-9]+\.[0-9]*(E[+-]?[0-9]+)?/
+INTEGER: /[+-]?[0-9]+/
+ENUMERATION: /\.[A-Z_][A-Z0-9_]*\./
+// Line breaks may fall inside strings and binaries (annex A); the decoder drops them.
+STRING: /'(?:[^'\\]|''|\\\\|\\S\\.|\\P[A-I]\\|\\X\\[0-9A-F]{2}|\\X2\\(?:[0-9A-F]|[\r\n])*\\X0\\|\\X4\\(?:[0-9A-F]|[\r\n])*\\X0\\|\\[NF]\\)*'/
+BINARY: /"[0-3](?:[0-9A-F]|[\r\n])*"/
+
+// Token separators (5.6): space, comments, and the print control directives of clause 11.
+COMMENT: /\/\*(.|\n)*?\*\//
+PRINT_CONTROL: /\\[NF]\\/
+%ignore COMMENT
+%ignore PRINT_CONTROL
+%ignore /[ \t\r\n\f]+/

@@ -63,9 +63,11 @@ class ExportFormat:
     id: str
     name: str
     extensions: tuple[str, ...]
-    needs: str  # "mesh", "brep" or "2d"
+    needs: str  # "mesh", "brep", "2d", or "graph" (written from the graph; no back-end)
     writer: Callable[[ExportJob], list[Path]] | None
     milestone: str = ""  # set for formats that are specified but not built yet
+    #: evaluate in trace mode, so numbers keep the parameters they came from (FR-C10)
+    traced: bool = False
 
     @property
     def available(self) -> bool:
@@ -81,6 +83,14 @@ def _formats() -> dict[str, ExportFormat]:
             (".step", ".stp"),
             "brep",
             _lazy(m + "step"),
+        ),
+        ExportFormat(
+            "step-parametric",
+            "STEP parametric (ISO 10303-42 CSG, -55 history, -108 parameters; AP242)",
+            (".stp", ".step"),
+            "graph",
+            _lazy(m + "step_parametric"),
+            traced=True,
         ),
         ExportFormat("iges", "IGES 5.3 B-rep solid", (".iges", ".igs"), "brep", _lazy(m + "iges")),
         ExportFormat("stl", "STL (binary; --ascii for ASCII)", (".stl",), "mesh", _lazy(m + "stl")),
@@ -107,6 +117,21 @@ def _formats() -> dict[str, ExportFormat]:
 
 
 FORMATS = _formats()
+
+
+class GraphOnly:
+    """The model handed to a format written from the graph alone: nothing is realized."""
+
+    def __init__(self, dim: int) -> None:
+        self.dim = dim
+
+    def _none(self) -> object:
+        raise GcadError("this format is written from the graph; nothing was realized")
+
+    mesh = contours = volume = area = bounds = _none
+
+    def is_valid(self) -> bool:
+        return True
 
 
 def format_for(path: Path, explicit: str | None = None) -> ExportFormat:

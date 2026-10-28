@@ -101,6 +101,19 @@ What templates can produce: `(define name expr)`, `(define (f x (y 2)) body)`, `
 
 If your language uses different names for GCore built-ins, or needs helper functions, put GCore definitions in `prelude.gcore`. They are evaluated in a scope of their own, between the built-ins and the user's program, so a program can still redefine any of them. `minscad`'s prelude, for example, has `(define cube box)`.
 
+## Languages whose files refer to themselves
+
+Some languages are not trees but graphs: an ISO 10303-21 (STEP) file is a list of numbered instances, each referring to others by number, in any order. The [`iso10303`](../src/gcad/kernels/iso10303) kernel shows how to handle one with data only.
+
+- **`letrec`** binds names in any order: `(letrec ((b (+ a 1)) (a 2)) b)`. Each binding is evaluated once, when it is first used; a name bound twice and a cycle of references (`a -> b -> a`) are errors that name them. Without a body, `letrec` gives the list of every binding's value, in order, which is how a kernel hands "all the instances" to its prelude. A rewrite rule such as `instance = "($1 (record $1:str $2))"` turns each instance into a binding.
+- **`(record item...)`** is a list that remembers where it was written. **`(at record body...)`** makes the geometry and the diagnostics of `body` point at that record's place in the user's file, even when the code that runs is in the prelude. So a prelude can be an interpreter of the user's data, and clicking a face still selects the source that made it. `(warn "...")`, `(info "...")` and `(fail "...")` report at that place too.
+- **`(resolve "name" default)`** gives the value a name has, the name given as a string: a prelude can dispatch on data, as in `((resolve (str "solid/" keyword) unknown) record)`. Also for data: `(apply f list)`, `(contains list x)`, `(split s sep)`, `(upper s)`, `(lower s)`, `(starts_with s prefix)`, `(parse_number s)` and `(parse_value s)`, which reads a GCore literal without evaluating anything.
+- **`(import_source "step")`** hands the source file itself to a back-end that can read it: an `import` node in the graph, which keeps the file by its SHA-256.
+- **String decoders**: `[tokens] STRING = "string:iso10303-21"` reads a terminal with the named decoder instead of JSON escapes.
+- **A semantic checker**: `checker = "iso10303-21"` in `kernel.toml` runs a checker the engine provides after parsing, for what a grammar cannot decide (here: the file against its EXPRESS schemas). Its errors are reported and make `gcad eval` exit non-zero, but the model is still built.
+
+A language that is specified in a standard keeps its own notation there. `gcad grammar import --notation wsn productions.txt --start NAME` converts Wirth Syntax Notation to a Lark grammar (Earley, character level), which is how the `iso10303` kernel's hand-written grammar is checked against the standard's productions; see [the design note](design/iso10303-kernel.md#1-notation-grammar-and-tool).
+
 ## Choosing a parser
 
 `parser = "lalr"` is fast and most languages fit. Reduce/reduce conflicts are errors when the grammar is compiled; shift/reduce conflicts are resolved by shifting, which is what makes a dangling `else` bind to the nearest `if`. `parser = "earley"` accepts any context-free grammar, including ambiguous ones, at some cost in speed. `start` in `kernel.toml` picks a start rule other than `start`.
