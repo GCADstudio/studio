@@ -66,6 +66,12 @@ def test_binds_to_loopback_with_a_token(server: StudioServer) -> None:
     assert "#token=" in server.url  # a fragment: the browser never sends it in requests
 
 
+def test_a_port_in_use_is_refused(server: StudioServer, tmp_path: Path) -> None:
+    """A second server must not share a serving port (Windows allows it with SO_REUSEADDR)."""
+    with pytest.raises(OSError):
+        StudioServer(tmp_path, port=server.port)
+
+
 def test_rpc_needs_the_token(server: StudioServer) -> None:
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "hello"}).encode()
     assert request(server, "POST", "/rpc", body)[0] == 401

@@ -198,3 +198,30 @@ jobs:
           name: libreoffice-output
           path: libreoffice-output
           if-no-files-found: ignore
+
+  # The bundled process kernels need their own programs: OpenSCAD, and CadQuery in an
+  # environment of its own (it pins cadquery-ocp below 8). AC-13, AC-14.
+  process-kernels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install OpenSCAD
+        run: |
+          echo "set man-db/auto-update false" | sudo debconf-set-selections
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 openscad
+          openscad --version
+      - name: Install CadQuery in its own environment
+        run: |
+          python -m venv "$RUNNER_TEMP/cq"
+          "$RUNNER_TEMP/cq/bin/python" -m pip install cadquery
+          echo "GCAD_CADQUERY_PYTHON=$RUNNER_TEMP/cq/bin/python" >> "$GITHUB_ENV"
+      - run: python -m pip install -e ".[dev]"
+      - run: pytest -q -rs tests/test_process_kernels.py
+        env:
+          GCAD_REQUIRE_PROCESS_KERNELS: "1"
