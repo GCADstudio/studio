@@ -31,7 +31,7 @@ from typing import Any
 import numpy as np
 
 from gcad import GENERATOR, __version__
-from gcad.backends import available_backends, get_backend, select_backend
+from gcad.backends import available_backends, select_backend
 from gcad.core.evaluator import Limits
 from gcad.core.sexpr import to_text
 from gcad.diagnostics import Diagnostic, GcadError, Severity
@@ -248,7 +248,9 @@ class Studio:
     ) -> dict[str, object]:
         # Without OpenCASCADE (the browser) an imported B-rep is left out with a warning, so
         # the rest of the model and its annotations still show.
-        model = get_backend("manifold").realize(graph, skip_imports=diagnostics is not None)
+        from gcad.backends.manifold_backend import ManifoldBackend
+
+        model = ManifoldBackend().realize(graph, skip_imports=diagnostics is not None)
         for skipped in model.skipped:
             if diagnostics is not None:
                 diagnostics.append(replace(skipped.diagnostic, severity=Severity.WARNING))

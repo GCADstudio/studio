@@ -149,12 +149,20 @@ def cmd_kernel_check(args: argparse.Namespace) -> int:
         print("warning: no examples/ to run", file=sys.stderr)
     for path in examples:
         evaluated = evaluate_source(path.read_text(encoding="utf-8"), str(path), kernel)
-        failed = print_diagnostics(evaluated.result.diagnostics)
-        if failed or evaluated.result.graph is None:
+        # A checker's findings say the file does not conform, not that the kernel failed: an
+        # example may be a real-world file with known errors (NIST's PMI test files are).
+        nonconforming = [
+            d
+            for d in evaluated.result.diagnostics
+            if d.origin == "check" and d.severity is Severity.ERROR
+        ]
+        print_diagnostics([d for d in evaluated.result.diagnostics if d not in nonconforming])
+        if not evaluated.result.ok or evaluated.result.graph is None:
             failures += 1
             print(f"FAIL {path.name}")
         else:
-            print(f"ok   {path.name}  graph {evaluated.result.graph.hash()[:16]}")
+            note = f"  ({len(nonconforming)} conformance errors)" if nonconforming else ""
+            print(f"ok   {path.name}  graph {evaluated.result.graph.hash()[:16]}{note}")
     return 1 if failures else 0
 
 

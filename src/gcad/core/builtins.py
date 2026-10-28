@@ -779,7 +779,7 @@ def _flat_points(value: object, what: str, span: Span | None) -> list[float]:
 def _texts(value: object, what: str, span: Span | None) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
         raise GcadError(f"{what} must be a list of strings", span)
-    return list(value)  # type: ignore[arg-type]
+    return list(value)
 
 
 def b_annotate(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> None:
@@ -857,7 +857,7 @@ def b_annotate(args: list[object], kwargs: dict[str, object], ctx: CallCtx) -> N
             targets=targets,
             links=_texts(v["links"], "links", span),
             # a value is shown as text; an undefined one leaves its pair out
-            details=[(d[0], show(d[1])) for d in details if d[1] is not None],  # type: ignore[index]
+            details=[(d[0], show(d[1])) for d in details if d[1] is not None],
             camera=camera,
         )
     )
