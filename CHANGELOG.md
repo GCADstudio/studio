@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**Kernel `elmergrid`.** ElmerGrid's `.grd` structured-mesh format from Elmer FEM, MATC expressions included, as a fourth bundled kernel: grammar, rewrite rules, a GCore prelude and five examples, with no change to the core. Each material becomes a named, coloured solid or region, so a `.grd` file opens in the studio and exports like any other model. Keywords that only shape the mesh are ignored; ones that change the geometry and are not supported are errors at their line. Checked against ElmerGrid itself: per-material area or volume and bounds match on 441 of the 531 distinct `.grd` files in Elmer's sources, and every other file is an error by design (SPEC §5.2).
+
 **Web studio (M7, SPEC §4.1).** The studio as a static site that needs nothing installed: the same UI talks to `gcad.server.Studio` running in Pyodide in a Web Worker instead of to `gcad serve`. Back-end M runs on Manifold's own WebAssembly build through a small binding with the manifold3d API, so the geometry matches the native back-end (checked for every bundled example). Every mesh and 2D format exports in the browser; STEP and IGES say they need the local install. Files are kept in the browser, with Upload and Download. A runaway model is replaced by the next edit within about a second, by a standby worker. `tools/build_site.py` builds the site reproducibly from pinned, SHA-256-checked Pyodide, Manifold and wheels; CI tests it in headless Chrome and publishes it to GitHub Pages from `master`.
 
 ## 0.1.0

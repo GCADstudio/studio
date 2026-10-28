@@ -1,0 +1,7 @@
+id = "elmergrid"
+name = "ElmerGrid (.grd)"
+version = "0.1.0"
+description = "ElmerGrid's structured-mesh definition format from the Elmer FEM suite, with MATC expressions: the subcell grid and material matrix become one solid or region per material. Keywords that only shape the mesh are read and ignored; ones that change the geometry and are not supported are errors. Written only as grammar, rewrite rules and a GCore prelude."
+extensions = [".grd"]
+comment = "!"
+parser = "lalr"

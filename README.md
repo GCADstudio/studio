@@ -40,6 +40,7 @@ Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-deli
 | GCore language and evaluator with source spans, limits and diagnostics |
 | Grammar kernels: a Lark EBNF grammar + GCore rewrite templates, no Python |
 | Kernels `minscad` (`.mscad`, OpenSCAD subset), `csg` (`.gcsg`, S-expressions), `parts` (`.parts`, a parts list) |
+| Kernel `elmergrid` (`.grd`): ElmerGrid's structured-mesh format from [Elmer FEM](https://www.elmerfem.org), MATC expressions included, one solid or region per material; written only as grammar, rewrite rules and a GCore prelude, and checked against ElmerGrid on 441 of the 531 distinct `.grd` files in Elmer's sources |
 | Exact B-rep back-end on [OpenCASCADE](https://dev.opencascade.org); mesh back-end on [Manifold](https://github.com/elalish/manifold); both CPU only |
 | 3D export: STEP (AP214/AP242), IGES; STL, OBJ + MTL, glTF, X3D, VRML, COLLADA, UNV |
 | 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM |

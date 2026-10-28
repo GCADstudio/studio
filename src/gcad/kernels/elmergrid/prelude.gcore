@@ -1,0 +1,386 @@
+; ElmerGrid .grd -> geometry, following how ElmerGrid itself reads a file (egnative.c, fempre.c).
+;
+; The grammar makes one record ["tag" check args...] per line. (check r ok why) fails with the
+; line's own position. MATC text arrives as ["$matc" statements check] and runs here, in file
+; order, with one set of MATC variables.
+;
+; ElmerGrid reads the file twice: first the grid keywords (LoadElmergrid), then the command
+; keywords (LoadCommands). Each pass evaluates the MATC on its lines again. Each material
+; becomes (name "material m" (color c shape)); cells outside Materials Interval are empty.
+
+(define MAXCELLS 100)
+(define MAXBODYID 1000)
+
+; --- small helpers -------------------------------------------------------------------------
+
+(define (tag r) (get r 0))
+(define (check r ok why) ((get r 1) ok why))
+(define (arg r i) (get r (+ i 2)))
+(define (is-record r) (and (is_list r) (> (len r) 1) (is_string (get r 0))))
+
+(define (keep xs ok) (for ((x xs) (y (if (ok x) [x] []))) y))
+(define (count xs ok) (len (keep xs ok)))
+(define (member xs v) (> (count xs (fn (x) (== x v))) 0))
+(define (take xs n) (for ((i (range 0 (- n 1)))) (get xs i)))
+; C arrays: unset entries read as 0
+(define (at xs i) (let ((v (get xs i))) (if (is_undef v) 0 v)))
+(define (or-default v d) (if (is_undef v) d v))
+(define (put xs i v) (for ((k (range 0 (max (- (len xs) 1) i)))) (if (== k i) v (get xs k))))
+(define (pad xs n) (for ((i (range 0 (- n 1)))) (at xs i)))
+(define (insert-sorted xs v)
+  (if (member xs v) xs
+    (concat (keep xs (fn (x) (< x v))) [v] (keep xs (fn (x) (> x v))))))
+(define (distinct-from xs i acc) (if (>= i (len xs)) acc (distinct-from xs (+ i 1) (insert-sorted acc (get xs i)))))
+; Sorted distinct values of a list of rows, one row at a time, so the recursion stays as deep
+; as a row is long (at most 99 subcells) rather than as the whole grid.
+(define (distinct-rows rows i acc) (if (>= i (len rows)) acc (distinct-rows rows (+ i 1) (distinct-from (get rows i) 0 acc))))
+(define (distinct rows) (distinct-rows rows 0 []))
+(define (non-decreasing xs) (== (count (range 1 (- (len xs) 1)) (fn (i) (< (get xs i) (get xs (- i 1))))) 0))
+
+; sscanf("%d") and strtol read a number's integer part. MATC prints 12 significant digits, so a
+; computed 2.9999999999999996 reaches ElmerGrid as "3"; the tolerance keeps that a 3.
+(define (as-int x)
+  (let ((t (* 1e-14 (max 1 (abs x)))))
+    (if (>= x 0) (floor (+ x t)) (- 0 (floor (+ (- 0 x) t))))))
+(define (ints xs) (for ((x xs)) (as-int x)))
+
+; --- MATC ----------------------------------------------------------------------------------
+; Values are row vectors (lists of numbers). MATC's trigonometry is in radians, GCore's in degrees.
+
+(define RAD (/ 180 PI))
+(define (scalar v) (== (len v) 1))
+(define (each v f) (for ((x v)) (f x)))
+(define (both a b f fail)
+  (if (scalar a) (each b (fn (y) (f (get a 0) y)))
+    (if (scalar b) (each a (fn (x) (f x (get b 0))))
+      (if (== (len a) (len b)) (for ((i (range 0 (- (len a) 1)))) (f (get a i) (get b i)))
+        (fail false (str "MATC: the sizes " (len a) " and " (len b) " do not match"))))))
+(define (truth x) (if x 1 0))
+(define (matc-pow x y fail)
+  (if (and (< x 0) (!= y (floor y))) (fail false "MATC: a negative number to a fractional power")
+    (if (and (== x 0) (< y 0)) (fail false "MATC: zero to a negative power is infinite")
+      (pow x y))))
+(define (matc-div x y fail) (if (== y 0) (fail false "MATC: division by zero gives inf") (/ x y)))
+
+(define (matc-op op a b fail)
+  (if (== op "+") (both a b (fn (x y) (+ x y)) fail)
+  (if (== op "-") (both a b (fn (x y) (- x y)) fail)
+  (if (== op "*") (both a b (fn (x y) (* x y)) fail)
+  (if (== op "/") (both a b (fn (x y) (matc-div x y fail)) fail)
+  (if (== op "^")
+    (if (scalar b) (each a (fn (x) (matc-pow x (get b 0) fail)))
+      (fail false "MATC: Matrix ^ Matrix"))
+  (if (== op "==") (both a b (fn (x y) (truth (== x y))) fail)
+  (if (== op "<>") (both a b (fn (x y) (truth (!= x y))) fail)
+  (if (== op "<") (both a b (fn (x y) (truth (< x y))) fail)
+  (if (== op "<=") (both a b (fn (x y) (truth (<= x y))) fail)
+  (if (== op ">") (both a b (fn (x y) (truth (> x y))) fail)
+  (if (== op ">=") (both a b (fn (x y) (truth (>= x y))) fail)
+  (if (== op "&") (both a b (fn (x y) (truth (and (!= x 0) (!= y 0)))) fail)
+  (if (== op "|") (both a b (fn (x y) (truth (or (!= x 0) (!= y 0)))) fail)
+    (fail false (str "MATC operator " op " is not supported"))))))))))))))))
+
+(define (matc-neg a) (each a (fn (x) (- 0 x))))
+
+(define (matc-range a b fail)
+  (if (not (and (scalar a) (scalar b))) (fail false "MATC: n:m needs two numbers")
+    (let ((n (get a 0)) (m (get b 0)))
+      (if (<= n m) (range n m 1) (range n m -1)))))
+
+(define (matc-ref env name fail)
+  (let ((hit (keep env (fn (e) (== (get e 0) name)))))
+    (if (> (len hit) 0) (get (get hit 0) 1)
+      (fail false (str "MATC: undeclared identifier " name)))))
+
+(define (one-arg args name fail)
+  (if (== (len args) 1) (get args 0)
+    (fail false (str "MATC: " name " takes one argument"))))
+(define (two-args args name fail)
+  (if (!= (len args) 2) (fail false (str "MATC: " name " takes two arguments")) args))
+(define (domain ok x name fail) (if ok x (fail false (str "MATC: " name " is undefined here"))))
+
+(define (matc-fn name args fail)
+  (if (== name "sin") (each (one-arg args name fail) (fn (x) (sin (* x RAD))))
+  (if (== name "cos") (each (one-arg args name fail) (fn (x) (cos (* x RAD))))
+  (if (== name "tan") (each (one-arg args name fail) (fn (x) (tan (* x RAD))))
+  (if (== name "asin") (each (one-arg args name fail) (fn (x) (/ (asin (domain (<= (abs x) 1) x name fail)) RAD)))
+  (if (== name "acos") (each (one-arg args name fail) (fn (x) (/ (acos (domain (<= (abs x) 1) x name fail)) RAD)))
+  (if (== name "atan") (each (one-arg args name fail) (fn (x) (/ (atan x) RAD)))
+  (if (== name "sinh") (each (one-arg args name fail) (fn (x) (/ (- (exp x) (exp (- 0 x))) 2)))
+  (if (== name "cosh") (each (one-arg args name fail) (fn (x) (/ (+ (exp x) (exp (- 0 x))) 2)))
+  (if (== name "tanh") (each (one-arg args name fail) (fn (x) (let ((a (exp x)) (b (exp (- 0 x)))) (/ (- a b) (+ a b)))))
+  (if (== name "exp") (each (one-arg args name fail) (fn (x) (exp x)))
+  (if (== name "ln") (each (one-arg args name fail) (fn (x) (ln (domain (> x 0) x name fail))))
+  (if (== name "log") (each (one-arg args name fail) (fn (x) (log (domain (> x 0) x name fail))))
+  (if (== name "sqrt") (each (one-arg args name fail) (fn (x) (sqrt (domain (>= x 0) x name fail))))
+  (if (== name "abs") (each (one-arg args name fail) (fn (x) (abs x)))
+  (if (== name "floor") (each (one-arg args name fail) (fn (x) (floor x)))
+  (if (== name "ceil") (each (one-arg args name fail) (fn (x) (ceil x)))
+  (if (== name "min") [(min (one-arg args name fail))]
+  (if (== name "max") [(max (one-arg args name fail))]
+  (if (== name "sum") [(sum-of (one-arg args name fail) 0 0)]
+  (if (== name "size") [1 (len (one-arg args name fail))]
+  (if (== name "pow") (let ((ab (two-args args name fail))) (both (get ab 0) (get ab 1) (fn (x y) (matc-pow x y fail)) fail))
+  (if (== name "atan2") (let ((ab (two-args args name fail))) (both (get ab 0) (get ab 1) (fn (y x) (/ (atan2 y x) RAD)) fail))
+  (if (== name "mod") (let ((ab (two-args args name fail))) (both (get ab 0) (get ab 1) (fn (x y) (if (== y 0) (fail false "MATC: mod by zero") (% x y))) fail))
+    (fail false (str "MATC function " name " is not supported by this kernel"))))))))))))))))))))))))))
+(define (sum-of v i acc) (if (>= i (len v)) acc (sum-of v (+ i 1) (+ acc (get v i)))))
+
+; name(i) indexes a variable (from 0); otherwise it calls a function.
+(define (matc-call env name args fail)
+  (let ((hit (keep env (fn (e) (== (get e 0) name)))))
+    (if (> (len hit) 0)
+      (let ((v (get (get hit 0) 1))
+            (idx (if (== (len args) 1) (get args 0)
+                   (if (and (== (len args) 2) (== (get args 0) [0])) (get args 1)
+                     (fail false (str "MATC: " name " is a row; index it as " name "(i)"))))))
+        (for ((i idx))
+          (if (and (== i (floor i)) (>= i 0) (< i (len v))) (get v i)
+            (fail false (str "MATC: index " i " is outside " name)))))
+      (matc-fn name args fail))))
+
+; MATC prints numbers with 12 significant digits (ElmerGrid sets format(12)); ElmerGrid reads
+; that text back.
+(define (sig12 x)
+  (if (== x 0) 0
+    (let ((s (pow 10 (- 11 (floor (log (abs x)))))))
+      (/ (round (* x s)) s))))
+
+; m = [env active printed]: the variables, MATC = True, and whether MATC has printed yet.
+; Once it has, ElmerGrid turns a line holding only MATC into an empty command, which takes the
+; next line as its arguments (see run-lines).
+(define MATC0 [[["pi" [PI]]] false false])
+
+(define (run-statements stmts i env out)
+  (if (>= i (len stmts)) [env out]
+    (let ((res ((get stmts i) env)))
+      (if (== (get res 0) "set")
+        (run-statements stmts (+ i 1) (concat [[(get res 1) (get res 2)]] env) out)
+        (run-statements stmts (+ i 1) env (concat out [(get res 1)]))))))
+
+; Runs one MATC program and returns [numbers m]: the numbers ElmerGrid reads in its place.
+(define (matc-run obj m)
+  (let ((fail (get obj 2)))
+    (if (not (get m 1)) (fail false "a $ expression needs MATC = True on a line before it")
+      (let ((res (run-statements (get obj 1) 0 (get m 0) []))
+            (out (get res 1)))
+        (if (> (len out) 1) (fail false "MATC prints each value on its own line, and ElmerGrid reads only the first")
+          (let ((nums (if (== (len out) 1) (get out 0) [])))
+            (if (> (len nums) 4) (fail false (str "this MATC result has " (len nums) " numbers; ElmerGrid reads at most 4, because MATC wraps longer rows"))
+              [(for ((x nums)) (sig12 x)) [(get res 0) (get m 1) (or (get m 2) (== (len out) 1))]])))))))
+
+(define (is-matc x) (and (is_list x) (== (len x) 3) (== (get x 0) "$matc")))
+(define (has-matc x) (or (is-matc x) (and (is_list x) (> (count x (fn (y) (has-matc y))) 0))))
+
+; Replaces every MATC program inside x by its numbers, in order: [x' m'].
+(define (resolve-from xs i acc m)
+  (if (>= i (len xs)) [acc m]
+    (let ((x (get xs i)))
+      (if (is-matc x)
+        (let ((res (matc-run x m))) (resolve-from xs (+ i 1) (concat acc (get res 0)) (get res 1)))
+        (if (has-matc x)
+          (let ((res (resolve-from x 0 [] m))) (resolve-from xs (+ i 1) (concat acc [(get res 0)]) (get res 1)))
+          (resolve-from xs (+ i 1) (concat acc [x]) m))))))
+(define (resolve x m) (if (has-matc x) (resolve-from x 0 [] m) [x m]))
+
+; --- the two passes, line by line ------------------------------------------------------------
+
+(define PASS1 ["version" "matc" "coordsys" "divisions" "limits" "sizes" "origin" "structure" "interval"])
+(define PASS2 ["extruded" "ext_divisions" "ext_limits" "ext_sizes" "ext_structure" "ext_mappings" "ext_maxmat" "ext_helicity" "bulkmap"])
+(define (reads pass r) (member (if (== pass 1) PASS1 PASS2) (tag r)))
+
+; Walks the records as ElmerGrid's GetCommand walks lines, and returns [records m]: the records
+; this pass reads, with their MATC resolved. A swallowed line is lost to the pass; when the
+; pass needs it, that is an error rather than a different model.
+(define (run-lines recs i pass m pending out)
+  (if (>= i (len recs)) [out m]
+    (let ((r (get recs i))
+          (m1 (if (and (== pass 1) (== (tag r) "matc")) [(get m 0) (arg r 0) (get m 2)] m))
+          (res (resolve r m1))
+          (r2 (get res 0))
+          (m2 (get res 1)))
+      (if pending
+        (let ((lost (check r (not (reads pass r)) "ElmerGrid does not read this line: it takes it as the arguments of the line before, a MATC-only line after MATC has printed a value, or a * line with MATC on. Put MATC assignments on keyword lines or before the first $ value")))
+          (run-lines recs (+ i 1) pass m2 (== (tag r) "mesh_next") out))
+        (run-lines recs (+ i 1) pass m2
+          (if (== (tag r) "matc_line") (get m2 2) (if (== (tag r) "star") (get m2 1) false))
+          (if (reads pass r) (concat out [r2]) out))))))
+
+; --- grid state ------------------------------------------------------------------------------
+
+(define DIM 0) (define XC 1) (define YC 2) (define ZC 3) (define XS 4) (define YS 5) (define ZS 6)
+(define STRUCT 7) (define FIRST 8) (define LAST 9) (define MAXMAT 10) (define VERSIONS 11)
+(define ZFIRST 12) (define ZLAST 13) (define ZMAT 14) (define ZMAP 15) (define BULK 16)
+(define MAKERS 17)
+(define (cells g d) (get g (if (== d 1) XC (if (== d 2) YC ZC))))
+(define (coords g d) (get g (if (== d 1) XS (if (== d 2) YS ZS))))
+(define (coords-slot d) (if (== d 1) XS (if (== d 2) YS ZS)))
+(define (ones g) (for ((j (range 1 (get g YC)))) (for ((i (range 1 (get g XC)))) 1)))
+(define DEFAULT-MAKERS
+  [(fn (x y w h) (translate [x y] (rect [w h])))
+   (fn (z h s) (translate [0 0 z] (linear_extrude :height h s)))
+   (fn (n c s) (name n (color c s)))])
+(define GRID0 [2 0 0 0 [] [] [] [] 1 MAXBODYID 0 0 [] [] [] undef [] DEFAULT-MAKERS])
+
+(define (set-dir r d)
+  (let ((ok (check r (and (== d (floor d)) (>= d 1) (<= d 3)) (str "ElmerGrid has directions 1 to 3, not " d)))) d))
+
+; Subcell Limits / Extruded Limits: ElmerGrid reads n+1 values (missing ones are 0) that must
+; not decrease.
+(define (write-limits r g slot n vs)
+  (let ((xs (pad vs (+ n 1)))
+        (ok (check r (non-decreasing xs) "the limits must not decrease (ElmerGrid stops: values for limits should be a growing series)")))
+    (put g slot (concat xs (for ((k (range (+ n 1) (- (len (get g slot)) 1)))) (at (get g slot) k))))))
+; Subcell Sizes / Extruded Sizes: limits are the running sum from the first limit.
+(define (write-sizes r g slot n vs)
+  (let ((sizes (pad vs n))
+        (ok (check r (== (count sizes (fn (s) (< s 0))) 0) "negative sizes are not supported")))
+    (put g slot (sums sizes 0 [(at (get g slot) 0)]))))
+(define (sums sizes i acc) (if (>= i (len sizes)) acc (sums sizes (+ i 1) (concat acc [(+ (get acc i) (get sizes i))]))))
+
+(define (origin-shift g d v)
+  (let ((xs (coords g d)) (n (cells g d)))
+    (if (== v "center") (* 0.5 (+ (at xs 0) (at xs n)))
+      (if (or (== v "left") (and (== v "min") (== d 1))) (at xs 0)
+        (if (or (== v "right") (and (== v "max") (== d 1))) (at xs n)
+          (if (is_string v) 0 (at v 0)))))))
+
+(define (read-rows r rows n width what)
+  (let ((ok (check r (>= (len rows) n) (str what " needs " n " rows, one per subcell; with fewer, ElmerGrid reads the lines after it (End, the next keywords) as rows"))))
+    (for ((k (range 0 (- n 1)))) (ints (pad (get rows k) width)))))
+
+(define (grid-step g r)
+  (let ((t (tag r)))
+    (if (== t "version") (put g VERSIONS (+ (get g VERSIONS) 1))
+    (if (== t "coordsys") (put g DIM (arg r 0))
+    (if (== t "divisions")
+      (let ((vs (ints (arg r 0))) (dim (get g DIM))
+            (xc (or-default (get vs 0) (get g XC)))
+            (yc (if (== dim 1) 1 (or-default (get vs 1) (get g YC))))
+            (zc (if (== dim 3) (or-default (get vs 2) (get g ZC)) (get g ZC)))
+            (ok (check r (== (count [xc yc zc] (fn (c) (>= c MAXCELLS))) 0) "ElmerGrid allows at most 99 subcells in each direction"))
+            (g1 (put (put (put g XC xc) YC yc) ZC zc)))
+        (put g1 STRUCT (ones g1)))
+    (if (== t "limits")
+      (let ((d (set-dir r (arg r 0)))) (write-limits r g (coords-slot d) (cells g d) (arg r 1)))
+    (if (== t "sizes")
+      (let ((d (set-dir r (arg r 0)))) (write-sizes r g (coords-slot d) (cells g d) (arg r 1)))
+    (if (== t "origin")
+      (let ((d (set-dir r (arg r 0))) (shift (origin-shift g d (arg r 1))))
+        (put g (coords-slot d) (for ((k (range 0 (cells g d)))) (- (at (coords g d) k) shift))))
+    (if (== t "structure")
+      ; The first row of the matrix is the top row of cells (largest y), as ElmerGrid reads it.
+      (let ((yc (get g YC)) (xc (get g XC))
+            (rows (read-rows r (arg r 0) yc xc "Material Structure"))
+            (s (for ((j (range 1 yc))) (get rows (- yc j)))))
+        (put (put (put g STRUCT s) MAXMAT (let ((all (for ((row s) (v row)) v))) (if (> (len all) 0) (max all) 0)))
+          MAKERS [(arg r 1) (arg r 2) (arg r 3)]))
+    (if (== t "interval")
+      (let ((vs (ints (arg r 0))))
+        (put (put g FIRST (or-default (get vs 0) (get g FIRST))) LAST (or-default (get vs 1) (get g LAST))))
+    (if (== t "extruded") (put g DIM 3)
+    (if (== t "ext_divisions")
+      (put (put g DIM 3) ZC (or-default (get (ints (arg r 0)) 0) (get g ZC)))
+    (if (== t "ext_limits") (write-limits r (put g DIM 3) ZS (get g ZC) (arg r 0))
+    (if (== t "ext_sizes") (write-sizes r (put g DIM 3) ZS (get g ZC) (arg r 0))
+    (if (== t "ext_structure")
+      (let ((rows (read-rows r (arg r 0) (get g ZC) 0 "Extruded Structure"))
+            (raw (take (arg r 0) (get g ZC))))
+        (put (put (put (put g DIM 3)
+          ZFIRST (for ((row raw)) (or-default (get (ints row) 0) 1)))
+          ZLAST (for ((row raw)) (or-default (get (ints row) 1) MAXBODYID)))
+          ZMAT (for ((row raw)) (or-default (get (ints row) 2) 0))))
+    (if (== t "ext_maxmat") (put (put g DIM 3) MAXMAT (or-default (get (ints (arg r 0)) 0) (get g MAXMAT)))
+    (if (== t "ext_mappings")
+      (let ((ok (check r (>= (get g MAXMAT) 1) "Extruded Material Mappings needs the materials first (Material Structure or Extruded Max Material)")))
+        (put (put g DIM 3) ZMAP (read-rows r (arg r 0) (get g ZC) (get g MAXMAT) "Extruded Material Mappings")))
+    (if (== t "ext_helicity")
+      (let ((ok (check r (== (count (arg r 0) (fn (h) (!= h 0))) 0) "Extruded Helicity twists the extrusion; it is not supported"))) (put g DIM 3))
+    (if (== t "bulkmap")
+      (put g BULK (for ((row (arg r 0)))
+        (let ((v (ints row)) (ok (check r (>= (len v) 3) "each Bulk Type Mappings row needs: first last new"))) (take v 3))))
+      g)))))))))))))))))))
+
+(define (fold-grid g recs i) (if (>= i (len recs)) g (fold-grid (grid-step g (get recs i)) recs (+ i 1))))
+
+; --- materials and geometry ----------------------------------------------------------------
+
+; Bulk Type Mappings: ElmerGrid's SideAndBulkMappings, row by row; a matched material is set to
+; -1 for the rows after it.
+(define (relabel-from maps l cur res)
+  (if (>= l (len maps)) res
+    (let ((mp (get maps l)))
+      (if (and (>= cur (get mp 0)) (<= cur (get mp 1)))
+        (relabel-from maps (+ l 1) -1 (get mp 2))
+        (relabel-from maps (+ l 1) cur res)))))
+(define (relabel g m) (relabel-from (get g BULK) 0 m m))
+
+(define (in-grid g m) (and (>= m (get g FIRST)) (<= m (get g LAST))))
+(define (cell g i j) (at (get (get g STRUCT) (- j 1)) (- i 1)))
+
+; The material layer k of an extruded grid gives 2D material m, or undef when it drops it.
+(define (layer-material g k m)
+  (if (is_undef (get g ZMAP))
+    (let ((lo (or-default (get (get g ZFIRST) (- k 1)) 1))
+          (hi (or-default (get (get g ZLAST) (- k 1)) MAXBODYID))
+          (to (or-default (get (get g ZMAT) (- k 1)) 0)))
+      (if (and (>= m lo) (<= m hi)) (if (!= to 0) to m) undef))
+    (if (or (< m 1) (> m (get g MAXMAT))) undef
+      (let ((to (at (get (get g ZMAP) (- k 1)) (- m 1)))) (if (> to 0) to undef)))))
+
+(define PALETTE ["#4e79a7" "#f28e2b" "#e15759" "#76b7b2" "#59a14f" "#edc948" "#b07aa1" "#ff9da7" "#9c755f" "#bab0ac"])
+(define (material-color m) (if (>= m 1) (get PALETTE (% (- m 1) 10)) "#808080"))
+
+; The cells of 2D material m, one rectangle each; cells of zero width or height are left out.
+(define (cells-of g m)
+  (let ((X (get g XS)) (Y (get g YS)) (mk (get (get g MAKERS) 0)))
+    (for ((j (range 1 (get g YC))) (i (range 1 (get g XC)))
+          (c (let ((w (- (at X i) (at X (- i 1)))) (h (- (at Y j) (at Y (- j 1)))))
+               (if (and (== (cell g i j) m) (> w 0) (> h 0)) [(mk (at X (- i 1)) (at Y (- j 1)) w h)] []))))
+      c)))
+
+(define (finish g fail)
+  (let ((v (get g VERSIONS))
+        (a (fail (>= v 1) "no Version line: ElmerGrid reads no grid from this file"))
+        (b (fail (<= v 1) "several Version lines: ElmerGrid makes one grid for each, and only one is supported"))
+        (c (fail (and (>= (get g XC) 1) (>= (get g YC) 1)) "no Subcell Divisions: the grid has no subcells"))
+        (dims (fail (or (== (get g DIM) 2) (>= (get g ZC) 1)) "a 3D grid needs subcells in z: Subcell Divisions in 3D or Extruded Divisions"))
+        (found (keep (distinct (get g STRUCT)) (fn (m) (in-grid g m))))
+        (cellsets (for ((m found)) (cells-of g m)))
+        (mats (keep (range 0 (- (len found) 1)) (fn (k) (> (len (get cellsets k)) 0))))
+        (regions (for ((k (range 0 (- (len found) 1)))) (if (> (len (get cellsets k)) 0) (union (get cellsets k)) undef)))
+        (wrap (get (get g MAKERS) 2))
+        (extrude (get (get g MAKERS) 1))
+        (shapes
+          (if (== (get g DIM) 2)
+            (let ((finals (distinct [(for ((k mats)) (relabel g (get found k)))])))
+              (for ((f finals))
+                (wrap (str "material " f) (material-color f)
+                  (union (for ((k mats) (s (if (== (relabel g (get found k)) f) [(get regions k)] []))) s)))))
+            ; Each layer of an extruded grid is the 2D map extruded straight up, with the
+            ; layer's own material renumbering (Extruded Structure or Extruded Material Mappings).
+            (let ((Z (get g ZS))
+                  (layers (keep (range 1 (get g ZC)) (fn (k) (> (at Z k) (at Z (- k 1))))))
+                  (by-layer (for ((k layers))
+                              (for ((i mats)
+                                    (p (let ((to (layer-material g k (get found i))))
+                                         (if (is_undef to) [] [[k i (relabel g to)]])))) p)))
+                  (pairs (for ((row by-layer) (p row)) p))
+                  (finals (distinct (for ((row by-layer)) (for ((p row)) (get p 2))))))
+              (for ((f finals))
+                (wrap (str "material " f) (material-color f)
+                  (union (for ((p pairs)
+                               (s (if (== (get p 2) f)
+                                    (let ((k (get p 0)))
+                                      [(extrude (at Z (- k 1)) (- (at Z k) (at Z (- k 1))) (get regions (get p 1)))])
+                                    []))) s)))))))
+        (some (fail (> (len shapes) 0) "no cells to build: Materials Interval keeps no material of the grid")))
+    shapes))
+
+; The whole file: both passes, then the geometry.
+(define (elmergrid lines fail)
+  (let ((recs (keep lines is-record))
+        (first (run-lines recs 0 1 MATC0 false []))
+        (second (run-lines recs 0 2 (get first 1) false []))
+        (g (fold-grid (fold-grid GRID0 (get first 0) 0) (get second 0) 0)))
+    (finish g fail)))

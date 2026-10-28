@@ -1,0 +1,252 @@
+// ElmerGrid .grd: the structured-mesh definition format of the Elmer FEM suite, rewritten into
+// GCore by rewrite.toml and prelude.gcore. One keyword per line, case-insensitive; arguments
+// follow "=" on the same line or stand alone on the next line; blocks end with "End".
+// Lines starting with # % ! are comments, and so are lines starting with * until MATC is on.
+// After a $ the rest of the line is MATC, Elmer's expression language (see m_* below).
+//
+// Keyword literals are spelled as in the ElmerGrid manual; the "i" flag makes them match in
+// any case, as ElmerGrid does.
+
+start: _NL? (_statement _NL | _block)* [old_version]
+
+// ElmerGrid reads these blocks by their row count (subcells or layers), so End is optional.
+_block: material_structure | extruded_structure | extruded_material_mappings
+
+_statement: version
+          | matc
+          | matc_line
+          | star_line
+          | coordinate_system
+          | subcell_divisions
+          | subcell_limits
+          | subcell_sizes
+          | subcell_origin
+          | materials_interval
+          | extruded_divisions
+          | extruded_limits
+          | extruded_sizes
+          | extruded_max_material
+          | extruded_helicity
+          | extruded_mesh
+          | bulk_type_mappings
+          | mesh_only
+          | mesh_only_next_line
+          | mesh_only_block
+          | scaling
+          | geometry_mappings
+          | boundary_layer
+          | revolve
+          | start_new_mesh
+          | transform
+          | coordinate_mapping
+          | renumber_material
+          | unknown
+          | stray_numbers
+          | stray_end
+
+// --- grid keywords (ElmerGrid's LoadElmergrid) ---------------------------------------------
+
+version: "Version"i ("=" | _NL) NUMBER
+// "Version 080500" (no "=") selects ElmerGrid's pre-2003 format; the rest of the file is not read.
+old_version: "Version"i OLD_FORMAT
+matc: "MATC"i ("=" | _NL) matc_flag
+?matc_flag: _TRUE                            -> matc_on
+          | _FALSE                           -> matc_off
+coordinate_system: "Coordinate"i "System"i ("=" | _NL) coordinate
+?coordinate: "Cartesian 1D"i                -> cartesian_1d
+           | "Cartesian 2D"i                -> cartesian_2d
+           | "Cartesian 3D"i                -> cartesian_3d
+           | "Axisymmetric"i                -> axisymmetric
+           | "Polar"i                       -> polar
+           | "2D Polar"i                    -> polar
+           | "2D Cartesian"i                -> unrecognised_2d
+
+subcell_divisions: "Subcell"i "Divisions"i _in_dim? ("=" | _NL) values
+subcell_limits: "Subcell"i "Limits"i NUMBER ("=" | _NL) values
+subcell_sizes: "Subcell"i "Sizes"i NUMBER ("=" | _NL) values
+subcell_origin: "Subcell"i "Origin"i NUMBER ("=" | _NL) origin
+?origin: values
+       | "Left"i                            -> origin_left
+       | "Min"i                             -> origin_min
+       | "Center"i                          -> origin_center
+       | "Right"i                           -> origin_right
+       | "Max"i                             -> origin_max
+material_structure: "Material"i "Structure"i _in_dim? _NL rows ["End"i _NL]
+materials_interval: "Materials"i "Interval"i ("=" | _NL) values
+_in_dim: "in"i _DIM
+
+// --- command keywords (ElmerGrid's LoadCommands, a second pass over the file) --------------
+
+extruded_divisions: "Extruded"i "Divisions"i ("=" | _NL) values
+extruded_limits: "Extruded"i "Limits"i ("=" | _NL) values
+extruded_sizes: "Extruded"i "Sizes"i ("=" | _NL) values
+extruded_structure: "Extruded"i "Structure"i _NL rows ["End"i _NL]
+extruded_material_mappings: "Extruded"i "Material"i "Mappings"i _NL rows ["End"i _NL]
+extruded_max_material: "Extruded"i "Max"i "Material"i ("=" | _NL) values
+extruded_helicity: "Extruded"i "Helicity"i ("=" | _NL) values
+extruded_mesh: "Extruded"i _extruded_mesh_kw ("=" | _NL) _rest
+_extruded_mesh_kw: "Elements"i | "Ratios"i | "Densities"i | "BC"i "Offset"i
+bulk_type_mappings: "Bulk"i "Type"i "Mappings"i _NL rows "End"i
+
+// --- keywords that only shape the mesh, not the geometry -------------------------------------
+
+mesh_only: _mesh_kw "=" _rest
+mesh_only_next_line: _mesh_kw _NL _rest_next
+// Arguments of keywords this kernel does not read are still tokens, so the editor colours them.
+_rest: arg* [matc_tail]
+_rest_next: arg+ [matc_tail]
+          | matc_tail
+?arg: NUMBER
+    | WORD                                 -> arg_word
+_mesh_kw: "Element"i "Degree"i
+        | "Element"i "Innernodes"i
+        | "Element"i "Midpoints"i
+        | "Element"i "Ratios"i NUMBER?
+        | "Element"i "Densities"i NUMBER?
+        | "Element"i "Divisions"i NUMBER?
+        | "Elementtype"i
+        | "Elementcode"i
+        | "Minimum"i "Element"i "Divisions"i
+        | "Surface"i "Elements"i
+        | "Plane"i "Elements"i
+        | "Volume"i "Elements"i
+        | "Volume"i "Nodes"i
+        | "Reference"i "Density"i
+        | "Verify"i "Density"i
+        | "Coordinate"i "Ratios"i
+        | "Numbering"i
+        | "Triangles"i
+        | "Triangles"i "Critical"i "Angle"i
+        | "Reduce"i "Order"i "Interval"i
+        | "Reduce"i "Degree"i
+        | "Increase"i "Degree"i
+        | "Isoparametric"i
+        | "Decimals"i
+        | "Merge"i
+        | "Merge"i "Nodes"i
+        | "Order"i "Nodes"i
+        | "Unite"i
+        | "Debug"i "IO"i
+        | "No"i "Boundary"i
+        | "Boundary"i "Offset"i
+        | "Layered"i "Boundaries"i
+        | "Boundary"i "Layer"i "Move"i
+        | "Boundary"i "Layer"i "Epsilon"i
+        | "Metis"i
+        | "Partition"i
+        | "Partition"i "Order"i
+        | "Periodic"i
+        | "Input"i "File"i
+        | "Output"i "File"i
+        | "Input"i "Mode"i
+        | "Output"i "Mode"i
+mesh_only_block: _mesh_block_kw _NL mesh_rows "End"i
+mesh_rows: (_mesh_row _NL)*
+_mesh_row: _ROW [matc_tail]
+         | matc_tail
+_mesh_block_kw: "Boundary"i "Definitions"i
+              | "Boundary"i "Boundary"i
+              | "Boundary"i "Type"i "Mappings"i
+              | "Material"i "Boundary"i
+              | "Power"i "Elements"i
+
+// --- keywords that change the geometry and are not supported (each one is an error) ----------
+
+// ElmerGrid's keyword is "Scale"; it does not read "Scaling" and leaves the mesh unscaled.
+scaling: "Scaling"i "=" _rest
+geometry_mappings: "Geometry"i "Mappings"i _NL mesh_rows "End"i
+boundary_layer: "Boundary"i "Layer"i _NL mesh_rows "End"i
+revolve: "Revolve"i arg* ["=" _rest]
+start_new_mesh: "Start"i "New"i "Mesh"i
+transform: TRANSFORM_KW ("=" | _NL) _rest
+TRANSFORM_KW.2: /(scale|translate|rotate(\s+mesh)?|clone(\s+size)?|mirror|cylinder|centralize|polar\s+radius)\b/i
+coordinate_mapping: "Coordinate"i "Mapping"i ("=" | _NL) _rest
+renumber_material: RENUMBER_KW ("=" | _NL) _rest
+RENUMBER_KW.2: /(renumber|reorder)\s+material\b/i
+
+unknown: keyword_text ["=" _rest]
+keyword_text: WORD (WORD | NUMBER)*
+stray_numbers: _ROW
+// ElmerGrid skips an End outside a block: a command containing END takes no arguments.
+stray_end: "End"i
+
+// --- values, matrices, MATC ------------------------------------------------------------------
+
+values: NUMBER+ [matc_tail]
+      | matc_tail
+rows: (values _NL)+
+
+// After a $ ElmerGrid hands the rest of the line to MATC and puts MATC's printed result in its
+// place. A line that starts with $ is MATC statements only.
+matc_line: "$" m_statements
+matc_tail: "$" m_statements
+m_statements: m_statement (";" m_statement)* ";"?
+?m_statement: M_NAME "=" m_expr               -> m_assign
+            | m_expr                          -> m_print
+
+// MATC's precedence, loosest first (its parser.c): & |, :, comparisons, + -, * # /, ^. Space-
+// separated operands form one row vector before any operator applies: "1+1 3" is 1 + [1 3].
+?m_expr: m_range
+       | m_expr "&" m_range                   -> m_and
+       | m_expr "|" m_range                   -> m_or
+?m_range: m_compare
+        | m_range ":" m_compare               -> m_colon
+?m_compare: m_sum
+          | m_compare M_COMPARE m_sum         -> m_cmp
+?m_sum: m_product
+      | m_sum "+" m_product                   -> m_add
+      | m_sum M_MINUS m_product               -> m_sub
+?m_product: m_power
+          | m_product "*" m_power             -> m_mul
+          | m_product "#" m_power             -> m_mul
+          | m_product "/" m_power             -> m_div
+?m_power: m_operand
+        | m_power "^" m_operand               -> m_pow
+?m_operand: m_element
+          | m_element m_element+              -> m_row
+?m_element: M_NUMBER                          -> m_number
+          | M_MANTISSA _M_D M_EXPONENT        -> m_number_d
+          | M_NAME                            -> m_ref
+          | M_CALL "(" [m_args] ")"           -> m_call
+          | M_CALL "[" [m_args] "]"           -> m_call
+          | "(" m_expr ")"
+          | M_UMINUS m_element                -> m_neg
+m_args: m_expr ("," m_expr)*
+
+// MATC's own rules: a minus right before an operand, after a space or an operator, negates that
+// operand ("a -b" is the row [a -b]; "a - b" and "a-b" subtract); a name right before "(" or "["
+// is a call or an index; numbers may use d or D for the exponent.
+M_UMINUS.3: /(?<=[\s${};=\[(\\<>&|+\-*\/^,])-(?=[^\s])/
+M_MINUS: "-"
+M_CALL.2: /[A-Za-z_`][A-Za-z0-9_`.]*(?=[(\[])/
+M_NAME: /[A-Za-z_`][A-Za-z0-9_`.]*/
+// "1." must be followed by digits or an exponent; MATC rejects "1. " as a badly formed number.
+M_NUMBER: /(\d+(\.\d+|\.(?=[eE]))?|\.\d+)([eE][+-]?\d+)?(?![dD.\w])/
+// MATC also reads Fortran's d exponent (2.5d-3), which is not a number for GCore's reader.
+M_MANTISSA.2: /(\d+(\.\d*)?|\.\d+)(?=[dD][+-]?\d)/
+_M_D: /(?<=[0-9.])[dD](?=[+-]?\d)/
+M_EXPONENT: /(?<=[dD])[+-]?\d+/
+M_COMPARE: "==" | "<>" | "<=" | ">=" | "<" | ">"
+
+// --- tokens ----------------------------------------------------------------------------------
+
+NUMBER: /[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/
+WORD: /[A-Za-z_][A-Za-z0-9_.\-]*/i
+_DIM: /[123]d\b/i
+_TRUE: /true\b/i
+_FALSE: /false\b/i
+OLD_FORMAT: /080500[\s\S]*/
+_ROW: /[-+]?\.?\d[^\n$!]*/
+// Only at the start of a line; elsewhere * is MATC's product.
+STAR_LINE: /(?<![^\n])\*[^\n]*/
+star_line: STAR_LINE
+
+// One line break token covers blank lines and whole-line comments (# % !) in between.
+_NL: /(\r?\n[\t \r]*([#%!][^\n]*)?)+/
+COMMENT: /![^\n]*/
+// A comment on the very first line has no line break before it for _NL to absorb.
+FIRST_LINE_COMMENT: /(?<![\s\S])[#%][^\n]*/
+
+%ignore COMMENT
+%ignore FIRST_LINE_COMMENT
+%ignore /[\t \r\f]+/

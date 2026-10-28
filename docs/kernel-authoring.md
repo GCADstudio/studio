@@ -111,3 +111,14 @@ If your language uses different names for GCore built-ins, or needs helper funct
 - `gcad eval <file> --dump gcore` shows the rewrite result; `--dump graph` shows the geometry graph.
 - `gcad kernel describe <id or folder>` prints the keywords, operators and token classes an editor uses for highlighting.
 - Quoted words in the grammar are keywords, so a user cannot also use them as names: in `parts`, a part cannot be called `d` because `cylinder d 8` uses `"d"`.
+
+## A real-world format
+
+[`elmergrid`](../src/gcad/kernels/elmergrid) reads ElmerGrid's `.grd` files from Elmer FEM, a format written long before GCAD Studio and not a CAD language. What it needed beyond the example above:
+
+- Case-insensitive keywords: `"Subcell"i`. Spell them as the format's manual does; the editor highlights that spelling.
+- A line-based grammar where the arguments may follow `=` or stand on the next line: write `("=" | _NL)` inside each rule. A shared rule such as `_sep: "=" | _NL` merges the parser states after it, so the lexer there offers every keyword's argument tokens at once.
+- Semantics that depend on the order of lines: rewrite each line into a record, a GCore list such as `["limits" check 1 [0 1 2]]`, and let a prelude function walk them in order. Give each record `(fn (ok why) (assert ok why))`: made by the template, it carries the line's position, so an error the prelude finds points at the user's line rather than at the prelude.
+- An embedded expression language (MATC after a `$`): its own rules in the same grammar, rewritten into GCore expressions over a variable environment that the prelude threads through the file.
+- Geometry made by closures from a template (`(fn (x y w h) (translate [x y] (rect [w h])))`) carries the template's position, so clicking a face in the viewer finds the block that made it.
+- A reference program to compare with: the kernel's tests rerun ElmerGrid and compare each material's area or volume and bounds.

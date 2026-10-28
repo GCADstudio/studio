@@ -1,0 +1,23 @@
+***** A T-section given by subcell sizes, centred on x = 0 *****
+! Materials Interval keeps material 1 only, so the cells of material 2 are left out.
+Version = 210903
+Coordinate System = Cartesian 2D
+Subcell Divisions in 2D = 3 2
+Subcell Sizes 1 = 12 6 12
+Subcell Origin 1 = Center
+Subcell Sizes 2 = 9 3
+Subcell Origin 2 = 1.5
+Material Structure in 2D
+  1  1  1
+  2  1  2
+End
+Materials Interval = 1 1
+Boundary Definitions
+! type     out      int
+  1         0        1        1
+End
+Element Degree = 2
+Element Innernodes = True
+Triangles = True
+Surface Elements = 400
+Minimum Element Divisions = 2 2
