@@ -1,0 +1,949 @@
+; iso10303: the records of an ISO 10303-21 file -> geometry.
+;
+; rewrite.toml turns a file into
+;   (step-model [header record...] (letrec ((#n (record "#n" "KEYWORD" attribute...)) ...)))
+; A complex instance is (record "#n" "+" (record "" "PARTIAL" attribute...) ...), a typed
+; parameter (record "" "TYPE" value), "*" (record "" "*"), an enumeration the text ".NAME.",
+; and "$" undef. Everything below works on those records. `at` makes the geometry a record
+; builds, and any error, point at that instance in the file (SPEC FR-C9).
+; docs/design/iso10303-kernel.md §4 maps each entity to what it becomes here.
+
+;; ---- lists and records ---------------------------------------------------------------------
+
+(define (filter xs keep) (apply concat (for ((x xs)) (if (keep x) [x] []))))
+(define (first xs) (get xs 0))
+(define (last xs) (get xs (- (len xs) 1)))
+(define (any xs keep) (> (len (filter xs keep)) 0))
+
+(define (rid r) (get r 0))
+(define (kw r) (get r 1))
+(define (attr r i) (get r (+ i 2)))
+(define (complex? r) (== (kw r) "+"))
+(define (partials r)
+  (if (complex? r) (for ((i (range 2 (- (len r) 1)))) (get r i)) [r]))
+(define (part r name) (first (filter (partials r) (fn (p) (== (kw p) name)))))
+(define (kinds r) (if (complex? r) (for ((p (partials r))) (kw p)) [(kw r)]))
+(define (is r name) (and (is_record r) (or (== (kw r) name) (and (complex? r) (contains (kinds r) name)))))
+(define (is-any r names) (and (is_record r) (any (kinds r) (fn (k) (contains names k)))))
+; a typed parameter's value: LENGTH_MEASURE(5.) -> 5
+(define (val x)
+  (if (and (is_record x) (== (rid x) "") (== (len x) 3) (!= (kw x) "*")) (get x 2) x))
+(define (where r) (if (== (rid r) "") (kw r) (str (rid r) " " (kw r))))
+(define (attrs r) (for ((i (range 2 (- (len r) 1)))) (get r i)))
+; An attribute of a simple instance by its position (internal mapping), or of a complex one by
+; the partial record of the entity that declares it and its position there (external mapping).
+(define (field r simple declaring k)
+  (if (complex? r) (attr (part r declaring) k) (attr r simple)))
+; an enumeration's name: ".MILLI." -> "MILLI"
+(define (enum x) (if (and (is_string x) (starts_with x ".")) (get (split x ".") 1) x))
+
+;; ---- context: units and parameter overrides ------------------------------------------------
+; ctx = [length factor to mm, angle factor to degrees, overrides, styles]
+; An override is [instance attribute value]: a Part 108 parameter bound to that attribute.
+
+(define (lf ctx) (get ctx 0))
+(define (af ctx) (get ctx 1))
+
+(define (override ctx r name)
+  (let ((hits (filter (get ctx 2) (fn (o) (and (== (get o 0) (rid r)) (== (get o 1) name))))))
+    (if (> (len hits) 0) (get (first hits) 2) undef)))
+
+(define (number r i name ctx)
+  (let ((o (override ctx r name))
+        (v (val (attr r i))))
+    (if (is_num o) o
+      (if (is_num v) v (fail (where r) ": " name " must be a number")))))
+(define (length r i name ctx) (* (lf ctx) (number r i name ctx)))
+(define (angle r i name ctx) (* (af ctx) (number r i name ctx)))
+
+; Units (ISO 10303-41): SI units with a prefix, and conversion-based units such as INCH and
+; DEGREE. A degree is taken as exactly one degree, not as its radian factor times 180/pi.
+(define PREFIX ["EXA" 1e21 "PETA" 1e18 "TERA" 1e15 "GIGA" 1e12 "MEGA" 1e9 "KILO" 1e6
+                "HECTO" 1e5 "DECA" 1e4 "DECI" 100 "CENTI" 10 "MILLI" 1 "MICRO" 0.001
+                "NANO" 1e-6 "PICO" 1e-9 "FEMTO" 1e-12 "ATTO" 1e-15])
+(define (prefix-factor p (i 0))
+  (if (>= i (len PREFIX)) 1000
+    (if (== (get PREFIX i) (enum p)) (get PREFIX (+ i 1)) (prefix-factor p (+ i 2)))))
+
+(define (unit-factor u kind)
+  (if (is u "SI_UNIT")
+    (let ((si (part u "SI_UNIT")))
+      (if (== kind "length")
+        (if (is_undef (attr si 0)) 1000 (prefix-factor (attr si 0)))
+        (* 180 (/ 1 PI))))
+    (if (is u "CONVERSION_BASED_UNIT")
+      (let ((cb (part u "CONVERSION_BASED_UNIT")))
+        (if (and (== kind "angle") (== (upper (attr cb 0)) "DEGREE"))
+          1
+          (let ((m (attr cb 1)))
+            (* (val (attr m 0)) (unit-factor (attr m 1) kind)))))
+      (fail (where u) ": unit not understood"))))
+
+(define (context-units c)
+  (let ((g (part c "GLOBAL_UNIT_ASSIGNED_CONTEXT"))
+        (units (if (is_undef g) [] (attr g 0)))
+        (lu (filter units (fn (u) (is u "LENGTH_UNIT"))))
+        (au (filter units (fn (u) (is u "PLANE_ANGLE_UNIT")))))
+    [(if (> (len lu) 0) (unit-factor (first lu) "length") 1)
+     (if (> (len au) 0) (unit-factor (first au) "angle") 1)]))
+
+;; ---- vectors and placements (ISO 10303-42) -------------------------------------------------
+
+(define IDENTITY [[1 0 0 0] [0 1 0 0] [0 0 1 0] [0 0 0 1]])
+(define (pad3 v) (if (== (len v) 2) [(get v 0) (get v 1) 0] v))
+(define (unit v) (let ((n (norm v))) (if (== n 1) v (* (/ 1 n) v))))
+(define (point r ctx)
+  (if (is r "CARTESIAN_POINT") (pad3 (* (lf ctx) (attr r 1)))
+    (fail (where r) ": a point must be a CARTESIAN_POINT")))
+(define (direction r)
+  (if (is r "DIRECTION") (pad3 (attr r 1)) (fail (where r) ": expected a DIRECTION")))
+(define (column m j) [(get (get m 0) j) (get (get m 1) j) (get (get m 2) j)])
+(define (frame x y z o)
+  [[(get x 0) (get y 0) (get z 0) (get o 0)]
+   [(get x 1) (get y 1) (get z 1) (get o 1)]
+   [(get x 2) (get y 2) (get z 2) (get o 2)]
+   [0 0 0 1]])
+(define (transpose m) (for ((j (range 0 (- (len (first m)) 1)))) (for ((row m)) (get row j))))
+(define (mat-mul a b) (let ((bt (transpose b))) (for ((row a)) (for ((c bt)) (* row c)))))
+; (GCore's * of a list of rows and a vector is not a matrix product, so rows go one by one.)
+(define (rows-times m v) (for ((row m)) (* row v)))
+(define (mat-vec m v) (let ((h (rows-times m [(get v 0) (get v 1) (get v 2) 1]))) [(get h 0) (get h 1) (get h 2)]))
+(define (translation v) (frame [1 0 0] [0 1 0] [0 0 1] v))
+
+; Part 42's default x direction when a placement gives none.
+(define (default-x z) (if (== (unit z) [1 0 0]) [0 1 0] [1 0 0]))
+(define (orthogonal a z) (unit (- a (* (* a z) z))))
+
+(define (axis2-3d r ctx)
+  (let ((o (point (attr r 1) ctx))
+        (z (if (is_undef (attr r 2)) [0 0 1] (unit (direction (attr r 2)))))
+        (a (if (is_undef (attr r 3)) (default-x z) (direction (attr r 3))))
+        (x (orthogonal a z)))
+    (frame x (cross z x) z o)))
+(define (axis1 r ctx)
+  (let ((o (point (attr r 1) ctx))
+        (z (if (is_undef (attr r 2)) [0 0 1] (unit (direction (attr r 2)))))
+        (x (orthogonal (default-x z) z)))
+    (frame x (cross z x) z o)))
+(define (axis2-2d r ctx)
+  (let ((o (point (attr r 1) ctx))
+        (x (if (is_undef (attr r 2)) [1 0 0] (unit (direction (attr r 2))))))
+    (frame x [(- (get x 1)) (get x 0) 0] [0 0 1] o)))
+(define (placement r ctx)
+  (if (is_undef r) IDENTITY
+    (if (is r "AXIS2_PLACEMENT_3D") (axis2-3d r ctx)
+      (if (is r "AXIS1_PLACEMENT") (axis1 r ctx)
+        (if (is r "AXIS2_PLACEMENT_2D") (axis2-2d r ctx)
+          (fail (where r) ": not a placement"))))))
+
+(define (translation-only? m)
+  (and (== [(get (get m 0) 0) (get (get m 0) 1) (get (get m 0) 2)] [1 0 0])
+       (== [(get (get m 1) 0) (get (get m 1) 1) (get (get m 1) 2)] [0 1 0])
+       (== [(get (get m 2) 0) (get (get m 2) 1) (get (get m 2) 2)] [0 0 1])))
+(define (place m shape)
+  (if (== m IDENTITY) shape
+    (if (translation-only? m) (translate (column m 3) shape) (matrix m shape))))
+
+;; ---- authoring hints -----------------------------------------------------------------------
+; GCAD's own writer names each item "gcad:" followed by the graph node it came from, as a
+; GCore literal: ["op" [["arg" value]...]]. A hint is used only when the file's geometry
+; agrees with it; otherwise the geometry alone decides (a file edited since it was written).
+
+(define (hint r)
+  (let ((n (if (is r "+") undef (attr r 0))))
+    (if (and (is_string n) (starts_with n "gcad:"))
+      (parse_value (get (split n "gcad:") 1))
+      undef)))
+(define (hint-of r op) (let ((h (hint r))) (if (and (is_list h) (== (first h) op)) h undef)))
+(define (harg h key (default undef))
+  (let ((hits (filter (get h 1) (fn (p) (== (first p) key)))))
+    (if (> (len hits) 0) (get (first hits) 1) default)))
+(define TOL 1e-9)
+(define (near a b)
+  (if (and (is_list a) (is_list b))
+    (and (== (len a) (len b)) (not (any (range 0 (- (len a) 1)) (fn (i) (not (near (get a i) (get b i)))))))
+    (and (is_num a) (is_num b) (<= (abs (- a b)) (* TOL (max 1 (abs a) (abs b)))))))
+; A hinted primitive is built from its hint, then moved by whatever placement the file has
+; beyond the one the writer gives that primitive (own): an outer transform folded in, an edit.
+(define (place-rel m own shape) (place (mat-mul m (translation (* -1 own))) shape))
+; tessellation hints the writer kept: :$fn, :$fa, :$fs as the node had them
+(define (fn-hint h) (harg h "fn" 0))
+(define (fa-hint h) (harg h "fa" 0))
+(define (fs-hint h) (harg h "fs" 0))
+
+;; ---- solids (ISO 10303-42 CSG, 4.4 and 6.4) ------------------------------------------------
+
+(define (solid r ctx)
+  (if (not (is_record r)) (fail "expected a solid, got " r)
+    (at r
+      (let ((style (styled r ctx))
+            (shape (solid-of r ctx)))
+        (if (is_undef style) shape (color style shape))))))
+
+(define (solid-of r ctx)
+  (let ((names (for ((p (partials r))) (kw p)))
+        (known (filter names (fn (n) (is_function (resolve (str "solid/" n)))))))
+    (if (> (len known) 0)
+      ((resolve (str "solid/" (first known))) r ctx)
+      (fail (where r) ": " (unsupported-why r)))))
+
+(define (styled r ctx)
+  (let ((hits (filter (get ctx 3) (fn (s) (== (first s) (rid r))))))
+    (if (> (len hits) 0) (get (first hits) 1) undef)))
+
+(define (solid/BLOCK r ctx)
+  (let ((m (placement (attr r 1) ctx))
+        (size [(length r 2 "x" ctx) (length r 3 "y" ctx) (length r 4 "z" ctx)])
+        (h (hint-of r "box")))
+    (if (and (is_list h) (near size (harg h "size")))
+      (place-rel m (if (harg h "center") (* -0.5 (harg h "size")) [0 0 0])
+                 (box (harg h "size") :center (harg h "center")))
+      (place m (box size)))))
+
+(define (solid/SPHERE r ctx)
+  (let ((rad (length r 1 "radius" ctx))
+        (c (if (is_undef (attr r 2)) [0 0 0] (point (attr r 2) ctx)))
+        (h (hint-of r "sphere")))
+    (place (translation c)
+      (if (and (is_list h) (near rad (harg h "r")))
+        (sphere (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+        (sphere rad)))))
+
+(define (cylinder-hinted h height r1 r2)
+  (and (near height (harg h "h")) (near [r1 r2] [(harg h "r1") (harg h "r2")])))
+(define (cylinder-own h) [0 0 (if (harg h "center") (* -0.5 (harg h "h")) 0)])
+(define (cylinder-from h)
+  (cylinder :h (harg h "h") :r1 (harg h "r1") :r2 (harg h "r2") :center (harg h "center")
+            :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h)))
+
+(define (solid/RIGHT_CIRCULAR_CYLINDER r ctx)
+  (let ((m (placement (attr r 1) ctx))
+        (height (length r 2 "height" ctx))
+        (rad (length r 3 "radius" ctx))
+        (h (hint-of r "cylinder")))
+    (if (and (is_list h) (cylinder-hinted h height rad rad))
+      (place-rel m (cylinder-own h) (cylinder-from h))
+      (place m (cylinder :h height :r rad)))))
+
+; Part 42 6.4.15: position.location is the centre of the small (top) face, the axis points out
+; of the solid from it, and the base lies height below it, with radius + height * tan(semi_angle).
+(define (solid/RIGHT_CIRCULAR_CONE r ctx)
+  (let ((m (placement (attr r 1) ctx))
+        (height (length r 2 "height" ctx))
+        (top (length r 3 "radius" ctx))
+        (semi (angle r 4 "semi_angle" ctx))
+        (base (+ top (* height (tan semi))))
+        (frame-m (mat-mul m (translation [0 0 (- height)])))
+        (h (hint-of r "cylinder")))
+    (if (and (is_list h) (cylinder-hinted h height base top))
+      (place-rel frame-m (cylinder-own h) (cylinder-from h))
+      (if (and (is_list h) (cylinder-hinted h height top base))
+        (place-rel (mat-mul m (mirror-z)) (cylinder-own h) (cylinder-from h))
+        (place frame-m (cylinder :h height :r1 base :r2 top))))))
+(define (mirror-z) [[1 0 0 0] [0 -1 0 0] [0 0 -1 0] [0 0 0 1]])
+
+; A torus is a circle revolved about the axis: exact on back-end B.
+(define (solid/TORUS r ctx)
+  (let ((m (placement (attr r 1) ctx))
+        (big (length r 2 "major_radius" ctx))
+        (small (length r 3 "minor_radius" ctx)))
+    (place m (rotate_extrude (translate [big 0] (circle small))))))
+
+; right_angular_wedge: the trapezium (0,0) (x,0) (ltx,y) (0,y) in xy, extruded along z.
+(define (solid/RIGHT_ANGULAR_WEDGE r ctx)
+  (let ((m (placement (attr r 1) ctx))
+        (x (length r 2 "x" ctx)) (y (length r 3 "y" ctx)) (z (length r 4 "z" ctx))
+        (ltx (length r 5 "ltx" ctx)))
+    (place m (linear_extrude :height z (polygon [[0 0] [x 0] [ltx y] [0 y]])))))
+
+(define (solid/ELLIPSOID r ctx)
+  ; a sphere of the first semi-axis, scaled, so it is tessellated at its own size
+  (let ((m (placement (attr r 1) ctx))
+        (a (length r 2 "semi_axis_1" ctx)) (b (length r 3 "semi_axis_2" ctx)) (c (length r 4 "semi_axis_3" ctx)))
+    (place m (scale [1 (/ b a) (/ c a)] (sphere a)))))
+
+(define (solid/RECTANGULAR_PYRAMID r ctx)
+  (let ((m (placement (attr r 1) ctx))
+        (x (length r 2 "xlength" ctx)) (y (length r 3 "ylength" ctx)) (h (length r 4 "height" ctx)))
+    (place m (polyhedron [[0 0 0] [x 0 0] [x y 0] [0 y 0] [(/ x 2) (/ y 2) h]]
+                         [[4 1 0] [4 2 1] [4 3 2] [4 0 3] [2 3 0 1]]))))
+
+; faces wound as polyhedron() wants them, whichever way round the four points are given
+(define (solid/TETRAHEDRON r ctx)
+  (let ((p (for ((q (attr r 1))) (point q ctx)))
+        (o (first p))
+        (turn (* (cross (- (get p 1) o) (- (get p 2) o)) (- (get p 3) o))))
+    (polyhedron p (if (> turn 0) [[0 1 2] [0 3 1] [1 3 2] [2 3 0]] [[0 2 1] [0 1 3] [1 2 3] [2 0 3]]))))
+
+(define BOOLEANS ["UNION" "union" "DIFFERENCE" "difference" "INTERSECTION" "intersection"])
+(define (boolean-op e (i 0))
+  (if (>= i (len BOOLEANS)) undef
+    (if (== (get BOOLEANS i) (enum e)) (get BOOLEANS (+ i 1)) (boolean-op e (+ i 2)))))
+
+; GCAD's union, difference and intersection take any number of operands; Part 42's are binary.
+; The writer chains them to the left and names the outermost ["union" [["n" 3]]] and the inner
+; ones ["union" [["n" 0]]]; the reader puts the chain back together when it is intact.
+(define (chain-ok r op tag n)
+  (if (<= n 2) true
+    (let ((inner (attr r 2)) (h (hint-of inner tag)))
+      (and (is-any inner ["BOOLEAN_RESULT" "BOOLEAN_RESULT_2D"]) (is_list h) (== (harg h "n") 0)
+           (== (boolean-op (attr inner 1)) op) (chain-ok inner op tag (- n 1))))))
+(define (flatten-chain r n)
+  (if (<= n 2) [(attr r 2) (attr r 3)]
+    (concat (flatten-chain (attr r 2) (- n 1)) [(attr r 3)])))
+(define (solid/BOOLEAN_RESULT r ctx)
+  (let ((op (boolean-op (attr r 1)))
+        (h (if (is_undef op) undef (hint-of r op)))
+        (n (if (is_list h) (harg h "n" 0) 0)))
+    (if (is_undef op) (fail (where r) ": operator must be .UNION., .DIFFERENCE. or .INTERSECTION.")
+      (if (and (> n 2) (chain-ok r op op n))
+        (apply (resolve op) (for ((o (flatten-chain r n))) (operand o ctx)))
+        (let ((c (hint-of r "children")) (k (if (is_list c) (harg c "n" 0) 0)))
+          ; the shapes of a transform that applies to several: a list, not a union
+          (if (and (== op "union") (>= k 2) (chain-ok r op "children" k))
+            (for ((o (flatten-chain r k))) (operand o ctx))
+            ((resolve op) (operand (attr r 2) ctx) (operand (attr r 3) ctx))))))))
+
+; An operand may be a solid, a CSG primitive, a boolean result or a half-space.
+(define (operand o ctx) (solid o ctx))
+
+(define (solid/CSG_SOLID r ctx) (operand (attr r 1) ctx))
+; AP242 carries 2D CSG in the later form of Part 42: CSG_SOLID_2D of BOOLEAN_RESULT_2D.
+(define (solid/CSG_SOLID_2D r ctx) (operand (attr r 1) ctx))
+(define (solid/CSG_PRIMITIVE_SOLID_2D r ctx) (operand (attr r 1) ctx))
+(define (solid/BOOLEAN_RESULT_2D r ctx) (solid/BOOLEAN_RESULT r ctx))
+
+; A half-space is the side of a surface its agreement flag names; GCAD's graph has no unbounded
+; solids, so it becomes a block on that side of the plane: the box domain when there is one, else
+; HALF_SPACE_EXTENT millimetres in each direction.
+(define HALF_SPACE_EXTENT 1e5)
+(define (half-space r ctx enclosure)
+  (let ((s (attr r 1))
+        (inside (attr r 2))
+        (m (if (is s "PLANE") (placement (attr s 1) ctx)
+             (fail (where r) ": only a planar half-space can be built (GCAD's graph has no other surface)")))
+        (e HALF_SPACE_EXTENT)
+        ; agreement_flag TRUE: the normal points away from the material (Part 42 6.4.27)
+        (slab (place m (translate [(- e) (- e) (if inside (- e) 0)] (box [(* 2 e) (* 2 e) e])))))
+    (if (is_undef enclosure) slab
+      (let ((corner (point (attr enclosure 0) ctx)))
+        (intersection slab
+          (translate corner (box [(* (lf ctx) (val (attr enclosure 1)))
+                                  (* (lf ctx) (val (attr enclosure 2)))
+                                  (* (lf ctx) (val (attr enclosure 3)))])))))))
+(define (solid/HALF_SPACE_SOLID r ctx) (half-space r ctx undef))
+(define (solid/BOXED_HALF_SPACE r ctx) (half-space r ctx (attr r 3)))
+
+;; ---- transformed solids --------------------------------------------------------------------
+
+; Part 42 cartesian_transformation_operator_3d: axes from axis1/axis2/axis3 (base_axis), a
+; uniform scale and an origin. Left-handed axes mirror.
+(define (cto3d t ctx)
+  (let ((a3 (if (is_undef (attr t 7)) [0 0 1] (unit (direction (attr t 7)))))
+        (a1 (if (is_undef (attr t 3)) (default-x a3) (direction (attr t 3))))
+        (u1 (orthogonal a1 a3))
+        (a2 (if (is_undef (attr t 4)) (cross a3 u1) (direction (attr t 4))))
+        (u2 (unit (- (- a2 (* (* a2 a3) a3)) (* (* a2 u1) u1))))
+        (s (if (is_num (val (attr t 6))) (val (attr t 6)) 1))
+        (o (point (attr t 5) ctx)))
+    (frame (* s u1) (* s u2) (* s a3) o)))
+
+; The writer names a replica after the graph transform it came from.
+(define (transform-hint h)
+  (let ((op (first h)))
+    (if (== op "translate") (translation (harg h "v"))
+      (if (== op "rotate") (rotation-xyz (harg h "a"))
+        (if (== op "scale") (let ((v (harg h "v"))) (frame [(get v 0) 0 0] [0 (get v 1) 0] [0 0 (get v 2)] [0 0 0]))
+          (if (== op "mirror") (mirror-matrix (harg h "v"))
+            (if (== op "matrix") (let ((m (harg h "m"))) (for ((i [0 4 8 12])) [(get m i) (get m (+ i 1)) (get m (+ i 2)) (get m (+ i 3))]))
+              (if (or (== op "color") (== op "name")) IDENTITY undef))))))))
+(define (rotation-xyz a)
+  (let ((cx (cos (get a 0))) (sx (sin (get a 0))) (cy (cos (get a 1))) (sy (sin (get a 1)))
+        (cz (cos (get a 2))) (sz (sin (get a 2)))
+        (rx [[1 0 0 0] [0 cx (- sx) 0] [0 sx cx 0] [0 0 0 1]])
+        (ry [[cy 0 sy 0] [0 1 0 0] [(- sy) 0 cy 0] [0 0 0 1]])
+        (rz [[cz (- sz) 0 0] [sz cz 0 0] [0 0 1 0] [0 0 0 1]]))
+    (mat-mul rz (mat-mul ry rx))))
+(define (mirror-matrix v)
+  (let ((n (unit v)))
+    (for ((i [0 1 2 3]))
+      (for ((j [0 1 2 3]))
+        (if (or (== i 3) (== j 3)) (if (== i j) 1 0)
+          (- (if (== i j) 1 0) (* 2 (get n i) (get n j))))))))
+(define (from-transform-hint h child)
+  (let ((op (first h)))
+    (if (== op "translate") (translate (harg h "v") child)
+      (if (== op "rotate") (rotate (harg h "a") child)
+        (if (== op "scale") (scale (harg h "v") child)
+          (if (== op "mirror") (mirror (harg h "v") child)
+            (if (== op "matrix") (matrix (transform-hint h) child)
+              (if (== op "color") (color (harg h "rgba") child)
+                (name (harg h "n") child)))))))))
+
+(define (solid/SOLID_REPLICA r ctx)
+  (let ((m (cto3d (attr r 2) ctx))
+        (child (solid (attr r 1) ctx))
+        (h (hint (attr r 2)))
+        (hm (if (is_list h) (transform-hint h) undef)))
+    (if (and (is_list hm) (near m hm))
+      (from-transform-hint h child)
+      (place m child))))
+
+;; ---- swept solids: profiles (ISO 10303-42 4.4.36, 4.4.37) ----------------------------------
+
+; A curve_bounded_surface on a plane, as a GCAD 2D shape in the plane's coordinates: its outer
+; boundary less the others. Polylines, circles and composite curves of line segments are exact;
+; an arc in a boundary is refused, because GCAD's 2D shapes have no arcs (FR-B4).
+(define (area r ctx)
+  (at r
+    (if (is r "CURVE_BOUNDED_SURFACE")
+      (let ((plane (attr r 1))
+            (m (if (is plane "PLANE") (placement (attr plane 1) ctx)
+                 (fail (where r) ": the swept area must lie on a PLANE")))
+            (bounds (attr r 2))
+            (outer (filter bounds (fn (b) (is b "OUTER_BOUNDARY_CURVE"))))
+            (ordered (concat outer (filter bounds (fn (b) (not (is b "OUTER_BOUNDARY_CURVE"))))))
+            (loops (for ((b ordered)) (boundary b m ctx))))
+        [m (if (== (len loops) 1) (first loops) (apply difference loops))])
+      (fail (where r) ": a swept area must be a CURVE_BOUNDED_SURFACE"))))
+
+(define (inverse-rigid m)
+  ; the inverse of a rotation + translation frame
+  (let ((rt [(column m 0) (column m 1) (column m 2)])   ; the rotation's transpose
+        (t (column m 3))
+        (o (* -1 (rows-times rt t))))
+    [[(get (get rt 0) 0) (get (get rt 0) 1) (get (get rt 0) 2) (get o 0)]
+     [(get (get rt 1) 0) (get (get rt 1) 1) (get (get rt 1) 2) (get o 1)]
+     [(get (get rt 2) 0) (get (get rt 2) 1) (get (get rt 2) 2) (get o 2)]
+     [0 0 0 1]]))
+(define (local m p) (let ((q (mat-vec (inverse-rigid m) p))) [(get q 0) (get q 1)]))
+
+(define (boundary b m ctx)
+  (at b
+    (let ((segs (attr b 1)))
+      (if (any segs (fn (s) (is-any (attr s 2) PCURVES)))
+        (pcurve-loop b segs ctx)
+      (if (and (== (len segs) 1) (is (attr (first segs) 2) "CIRCLE"))
+        (circle-2d (attr (first segs) 2) m ctx)
+        (let ((pts (apply concat (for ((s segs)) (segment-points s m ctx)))))
+          (if (== (len segs) 1) (polyline-2d (attr (first segs) 2) pts) (polygon pts))))))))
+
+; Boundaries as Part 42 requires them: curves on the plane (pcurves), whose 2D curves are in the
+; plane's own (u, v), so the profile needs no transform. Trimmed lines give a polygon; trimmed
+; arcs of one circle that close the loop give that circle; any other arc is refused (FR-B4).
+(define PCURVES ["PCURVE" "BOUNDED_PCURVE"])
+(define (curve-2d s)
+  (let ((pc (attr s 2)))
+    (if (is-any pc PCURVES)
+      (first (field-rep (field pc 2 "PCURVE" 1)))
+      (fail (where pc) ": a boundary mixes pcurves and other curves"))))
+(define (field-rep rep) (field rep 1 "REPRESENTATION" 1))
+(define (trim-point t ctx)
+  (let ((pts (filter t (fn (x) (is x "CARTESIAN_POINT")))))
+    (if (> (len pts) 0) (let ((p (point (first pts) ctx))) [(get p 0) (get p 1)])
+      (fail "a trimmed curve needs its end points (CARTESIAN trimming)"))))
+(define (pcurve-loop b segs ctx)
+  (let ((curves (for ((s segs)) (curve-2d s)))
+        (circles (filter curves (fn (c) (and (is c "TRIMMED_CURVE") (is (attr c 1) "CIRCLE")))))
+        (h (hint-of b "circle")))
+    (if (== (len circles) (len curves))
+      (let ((c0 (attr (first circles) 1))
+            (centre (column (placement (attr c0 1) ctx) 3))
+            (rad (length c0 2 "radius" ctx)))
+        (if (any circles (fn (c) (not (near [(column (placement (attr (attr c 1) 1) ctx) 3) (length (attr c 1) 2 "radius" ctx)] [centre rad]))))
+          (fail (where b) ": arcs of different circles: GCAD's 2D shapes have no arcs (FR-B4)")
+          (place (translation centre)
+            (if (and (is_list h) (near rad (harg h "r")))
+              (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+              (circle rad)))))
+      (let ((pts (apply concat
+                   (for ((i (range 0 (- (len curves) 1))))
+                     (let ((c (get curves i)) (s (get segs i)))
+                       (if (and (is c "TRIMMED_CURVE") (is (attr c 1) "LINE"))
+                         [(trim-point (if (== (attr s 1) (attr c 4)) (attr c 2) (attr c 3)) ctx)]
+                         (if (is c "POLYLINE")
+                           (let ((q (for ((x (attr c 1))) (p2 x ctx)))
+                                 (o (if (attr s 1) q (for ((k (range (- (len q) 1) 0 -1))) (get q k)))))
+                             (for ((k (range 0 (- (len o) 2)))) (get o k)))
+                           (fail (where c) ": a profile may hold lines and whole circles; "
+                                 "GCAD's 2D shapes have no arcs or splines (FR-B4)"))))))))
+        (polyline-2d b pts)))))
+(define (circle-2d c m ctx)
+  (let ((h (hint-of c "circle"))
+        (centre (local m (column (placement (attr c 1) ctx) 3)))
+        (rad (length c 2 "radius" ctx)))
+    (place (translation [(get centre 0) (get centre 1) 0])
+      (if (and (is_list h) (near rad (harg h "r")))
+        (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+        (circle rad)))))
+; a closed polyline the writer made from a square or a polygon
+(define (polyline-2d c pts)
+  (let ((r (hint-of c "rect")) (p (hint-of c "polygon")))
+    (if (and (is_list r)
+             (let ((s (harg r "size")) (o (if (harg r "center") (* -0.5 s) [0 0])))
+               (near pts [o [(+ (get o 0) (get s 0)) (get o 1)] (+ o s) [(get o 0) (+ (get o 1) (get s 1))]])))
+      (rect (harg r "size") :center (harg r "center"))
+      (if (and (is_list p) (is_undef (harg p "paths")) (near pts (harg p "points")))
+        (polygon (harg p "points"))
+        (polygon pts)))))
+; the points of a composite_curve_segment, each but the last of the segment
+(define (segment-points s m ctx)
+  (let ((c (attr s 2)) (forward (attr s 1)))
+    (if (is c "POLYLINE")
+      (let ((pts (for ((p (attr c 1))) (local m (point p ctx))))
+            (ordered (if forward pts (for ((i (range (- (len pts) 1) 0 -1))) (get pts i)))))
+        (for ((i (range 0 (- (len ordered) 2)))) (get ordered i)))
+      (if (and (is c "TRIMMED_CURVE") (is (attr c 1) "LINE"))
+        (let ((t1 (filter (attr c 2) (fn (t) (is t "CARTESIAN_POINT"))))
+              (t2 (filter (attr c 3) (fn (t) (is t "CARTESIAN_POINT")))))
+          (if (and (> (len t1) 0) (> (len t2) 0))
+            [(local m (point (first (if (== forward (attr c 4)) t1 t2)) ctx))]
+            (fail (where c) ": a trimmed line needs its end points")))
+        (fail (where c) ": a profile may hold polylines and trimmed lines; "
+              "GCAD's 2D shapes have no arcs or splines, and a polygon is not exact (FR-B4)")))))
+
+(define (solid/EXTRUDED_AREA_SOLID r ctx)
+  (let ((a (area (attr r 1) ctx))
+        (m (first a))
+        (d (unit (direction (attr r 2))))
+        (local-d (rows-times [(column m 0) (column m 1) (column m 2)] d))
+        (depth (length r 3 "depth" ctx))
+        (h (hint-of r "linear_extrude")))
+    (if (not (near [(get local-d 0) (get local-d 1)] [0 0]))
+      (fail (where r) ": an extrusion that is not along the plane's normal has no GCAD form")
+      (if (and (is_list h) (near depth (harg h "height")) (> (get local-d 2) 0)
+               (near m (if (harg h "center") (translation [0 0 (* -0.5 depth)]) IDENTITY)))
+        (linear_extrude (get a 1) :height (harg h "height") :center (harg h "center"))
+        (place (if (> (get local-d 2) 0) m (mat-mul m (translation [0 0 (- depth)])))
+               (linear_extrude (get a 1) :height depth))))))
+
+; revolved_area_solid: the profile's plane contains the axis. In a frame whose z is the axis and
+; whose x lies in that plane, the profile is (radius, height), which GCAD's rotate_extrude spins
+; about z from +x.
+(define (solid/REVOLVED_AREA_SOLID r ctx)
+  (let ((surface (attr r 1))
+        (plane (attr surface 1))
+        (pm (placement (attr plane 1) ctx))
+        (ax (placement (attr r 2) ctx))
+        (z (column ax 2))
+        (o (column ax 3))
+        (pn (column pm 2))
+        (x (unit (cross z pn)))
+        (rev (frame x z (cross x z) o))   ; profile coordinates: x = radius, y = along the axis
+        (a (area surface ctx))
+        (to-rev (mat-mul (inverse-rigid rev) pm))
+        (deg (angle r 3 "angle" ctx))
+        (h (hint-of r "rotate_extrude"))
+        (spin (frame x (cross z x) z o)))
+    (if (and (is_list h) (near deg (harg h "angle")) (near spin IDENTITY) (near to-rev IDENTITY))
+      (rotate_extrude (get a 1) :angle (harg h "angle")
+                      :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+      (place spin (rotate_extrude (place to-rev (get a 1)) :angle deg)))))
+
+;; ---- explicit B-rep (ISO 10303-42 topology) ------------------------------------------------
+; GCAD's graph has no B-rep of its own: back-end B reads the file's shapes itself, all of them
+; at once (OpenCASCADE transfers a file's roots, not one solid of it). So an explicit solid
+; inside a procedural history (a hybrid step, Part 55 5.2.2) cannot be read on its own.
+
+(define BREPS ["MANIFOLD_SOLID_BREP" "BREP_WITH_VOIDS" "FACETED_BREP" "SHELL_BASED_SURFACE_MODEL"
+               "FACE_BASED_SURFACE_MODEL"])
+(define (brep r)
+  (fail (where r) ": an explicit solid inside a history cannot be read on its own; "
+        "OpenCASCADE reads a file's shapes all at once"))
+(define (solid/MANIFOLD_SOLID_BREP r ctx) (brep r))
+(define (solid/BREP_WITH_VOIDS r ctx) (brep r))
+(define (solid/FACETED_BREP r ctx) (brep r))
+(define (solid/SHELL_BASED_SURFACE_MODEL r ctx) (brep r))
+(define (solid/FACE_BASED_SURFACE_MODEL r ctx) (brep r))
+
+;; ---- ISO 10303-55: procedural and hybrid sequences -----------------------------------------
+; A sequence's result is its last element that is not suppressed; selections
+; (user_selected_shape_elements) are not geometry. A nested sequence is a step of its own (a
+; hybrid step holds its explicit solid).
+
+(define (seq-elements r) (field r 1 "PROCEDURAL_REPRESENTATION_SEQUENCE" 0))
+(define (seq-suppressed r) (field r 2 "PROCEDURAL_REPRESENTATION_SEQUENCE" 1))
+(define (sequence-result r ctx)
+  (let ((suppressed (for ((s (seq-suppressed r))) (rid s)))
+        (live (filter (seq-elements r)
+                (fn (e) (and (not (any suppressed (fn (s) (== s (rid e)))))
+                             (not (is-any e ["USER_SELECTED_SHAPE_ELEMENTS" "USER_SELECTED_ELEMENTS"
+                                             "INDIRECTLY_SELECTED_SHAPE_ELEMENTS"])))))))
+    (if (== (len live) 0) (fail (where r) ": the sequence has no geometry")
+      (if (any live sketch-command?)
+        (at r (sketch-result live ctx))
+        (solid (last live) ctx)))))
+(define (solid/PROCEDURAL_REPRESENTATION_SEQUENCE r ctx) (sequence-result r ctx))
+
+;; ---- ISO 10303-112: sketch commands --------------------------------------------------------
+; A sketch is a Part 55 sequence of commands. The commands that make a closed region become 2D
+; shapes (the sketch is their union); a curve with no area (a line, an arc, a centreline) is not
+; shown and the console says so; the operations on earlier results are refused.
+
+(define (p2 r ctx) (let ((q (point r ctx))) [(get q 0) (get q 1)]))
+(define (sketch-attr r k) (attr r k))
+(define (solid/CREATE_RECTANGLE r ctx)
+  (let ((a (p2 (attr r 1) ctx)) (b (p2 (attr r 2) ctx)) (c (p2 (attr r 3) ctx))
+        (d (unit (- b a))) (n [(- (get d 1)) (get d 0)])
+        (h (* (- c a) n)))
+    (polygon [a b (+ b (* h n)) (+ a (* h n))])))
+(define (solid/CREATE_POLYGON r ctx)
+  (let ((n (val (attr r 1))) (c (p2 (attr r 2) ctx)) (s (p2 (attr r 3) ctx))
+        (rad0 (length r 5 "circle_radius" ctx))
+        (rad (if (== (enum (attr r 4)) "CIRCUMSCRIBED") (/ rad0 (cos (/ 180 n))) rad0))
+        (v (* rad (unit (- s c)))))
+    ; the start vertex turned by k * 360 / n
+    (polygon (for ((k (range 0 (- n 1))))
+               (let ((cs (cos-sin (* k (/ 360 n)))) (ca (get cs 0)) (sa (get cs 1)))
+                 (+ c [(- (* (get v 0) ca) (* (get v 1) sa)) (+ (* (get v 0) sa) (* (get v 1) ca))]))))))
+; [cos a, sin a] from the first quadrant only, by exact reduction: libraries' last bits differ
+; elsewhere (sin 240 in WebAssembly and glibc), and the graph must not depend on the platform.
+(define (cos-sin a)
+  (let ((q (floor (/ a 90))) (r (- a (* 90 q))) (c (cos r)) (s (sin r)) (m (% q 4)))
+    (if (== m 0) [c s] (if (== m 1) [(- s) c] (if (== m 2) [(- c) (- s)] [s (- c)])))))
+(define (solid/CREATE_CIRCLE_CENTRE_POINT r ctx)
+  (place (translation (pad3 (p2 (attr r 1) ctx))) (circle (length r 2 "radius" ctx))))
+(define (solid/CREATE_CIRCLE_2_POINTS r ctx)
+  (let ((a (p2 (attr r 1) ctx)) (b (p2 (attr r 2) ctx)))
+    (place (translation (pad3 (* 0.5 (+ a b)))) (circle (* 0.5 (norm (- a b)))))))
+(define (solid/CREATE_CIRCLE_3_POINTS r ctx)
+  (let ((a (p2 (attr r 1) ctx)) (b (p2 (attr r 2) ctx)) (c (p2 (attr r 3) ctx))
+        (ax (get a 0)) (ay (get a 1)) (bx (get b 0)) (by (get b 1)) (cx (get c 0)) (cy (get c 1))
+        (d (* 2 (+ (* ax (- by cy)) (* bx (- cy ay)) (* cx (- ay by)))))
+        (aa (+ (* ax ax) (* ay ay))) (bb (+ (* bx bx) (* by by))) (cc (+ (* cx cx) (* cy cy))))
+    (if (== d 0) (fail (where r) ": the three points are on one line")
+      (let ((u [(/ (+ (* aa (- by cy)) (* bb (- cy ay)) (* cc (- ay by))) d)
+                (/ (+ (* aa (- cx bx)) (* bb (- ax cx)) (* cc (- bx ax))) d)]))
+        (place (translation (pad3 u)) (circle (norm (- a u))))))))
+(define (solid/CREATE_POLYLINE r ctx)
+  (let ((pts (for ((q (attr r 1))) (p2 q ctx))))
+    (if (near (first pts) (last pts))
+      (polygon (for ((i (range 0 (- (len pts) 2)))) (get pts i)))
+      undef)))
+(define CURVES-ONLY ["CREATE_LINE_SEGMENT_2_POINTS" "CREATE_LINE_SEGMENT_POINT_TANGENT"
+                     "CREATE_LINE_SEGMENT_2_TANGENTS" "CREATE_CENTRELINE" "CREATE_CIRCULAR_ARC_3_POINTS"
+                     "CREATE_CIRCULAR_ARC_CENTRE_ENDS" "CREATE_CIRCULAR_ARC_ANGLES"
+                     "CREATE_CIRCULAR_ARC_CONCENTRIC" "CREATE_CIRCULAR_ARC_START_CENTRE_ANGLE"
+                     "CREATE_CIRCULAR_ARC_START_CENTRE_LENGTH" "CREATE_CIRCULAR_ARC_START_END_ANGLE"
+                     "CREATE_CIRCULAR_ARC_START_END_DIRECTION" "CREATE_CIRCULAR_ARC_START_END_RADIUS"
+                     "CREATE_CIRCULAR_ARC_3_TANGENTS" "CREATE_PARABOLIC_ARC" "CREATE_SPLINE"])
+(define (sketch-command? e) (and (is_record e) (or (starts_with (kw e) "CREATE_") (starts_with (kw e) "SKETCH_"))))
+(define (sketch-result elements ctx)
+  (let ((areas (filter (for ((e elements))
+                         (if (contains CURVES-ONLY (kw e))
+                           (at e (info (kw e) ": a curve with no area is not shown"))
+                           (let ((s (solid e ctx)))
+                             (if (is_undef s) (at e (info (kw e) ": an open polyline is not shown")) s))))
+                       (fn (s) (not (is_undef s))))))
+    (if (== (len areas) 0) (fail "the sketch has no closed region to show") (even-odd areas))))
+; Loops inside loops are holes, as in a face: the regions combined even-odd.
+(define (even-odd shapes (i 1) (acc undef))
+  (let ((a (if (is_undef acc) (first shapes) acc)))
+    (if (>= i (len shapes)) a
+      (let ((b (get shapes i)))
+        (even-odd shapes (+ i 1) (union (difference a b) (difference b a)))))))
+
+;; ---- ISO 10303-111: features on a solid ----------------------------------------------------
+; Round holes are a solid less cylinders (and a cone for a conical bottom), all exact; a hole
+; enters along -z of its placing (the placing's z axis points out of the entrance, 4.4.22).
+
+; Attributes by (simple position, declaring entity, position there).
+(define (placing r) (field r 3 "MODIFIED_SOLID_WITH_PLACED_CONFIGURATION" 0))
+(define (base-solid r) (field r 2 "MODIFIED_SOLID" 1))
+(define (hole-depth r) (field r 4 "SOLID_WITH_DEPRESSION" 0))
+(define (cumulative xs i) (apply + (concat [0] (for ((k (range 0 i))) (get xs k)))))
+; the cylinders of a stepped hole, the first at the entrance; a through hole's last one runs on
+; past every exit face
+(define (hole-cuts r ctx)
+  (let ((n (field r 5 "SOLID_WITH_STEPPED_ROUND_HOLE" 0))
+        (radii (* (lf ctx) (field r 6 "SOLID_WITH_STEPPED_ROUND_HOLE" 1)))
+        (depths (* (lf ctx) (field r 7 "SOLID_WITH_STEPPED_ROUND_HOLE" 2)))
+        (through (is r "SOLID_WITH_THROUGH_DEPRESSION")))
+    (for ((i (range 0 (- n 1))))
+      (let ((d (+ (get depths i) (if (and through (== i (- n 1))) HALF_SPACE_EXTENT 0))))
+        (translate [0 0 (- (+ (cumulative depths (- i 1)) d))] (cylinder :h d :r (get radii i)))))))
+(define (round-hole r ctx)
+  (let ((fillet (if (is r "SOLID_WITH_FLAT_BOTTOM_ROUND_HOLE")
+                  (field r 8 "SOLID_WITH_FLAT_BOTTOM_ROUND_HOLE" 0) 0)))
+    (if (and (is_num fillet) (> fillet 0))
+      (fail (where r) ": a hole with a bottom fillet needs a fillet operation, which GCAD's graph does not have")
+      (difference (solid (base-solid r) ctx) (place (placement (placing r) ctx) (union (hole-cuts r ctx)))))))
+(define (solid/SOLID_WITH_FLAT_BOTTOM_ROUND_HOLE r ctx) (round-hole r ctx))
+(define (solid/SOLID_WITH_STEPPED_ROUND_HOLE r ctx) (round-hole r ctx))
+(define (solid/SOLID_WITH_CONICAL_BOTTOM_ROUND_HOLE r ctx)
+  (let ((radii (* (lf ctx) (field r 6 "SOLID_WITH_STEPPED_ROUND_HOLE" 1)))
+        (rad (last radii))
+        (bottom (* (lf ctx) (apply + (field r 7 "SOLID_WITH_STEPPED_ROUND_HOLE" 2))))
+        (semi (* (af ctx) (field r 8 "SOLID_WITH_CONICAL_BOTTOM_ROUND_HOLE" 0)))
+        (tip (* (lf ctx) (field r 9 "SOLID_WITH_CONICAL_BOTTOM_ROUND_HOLE" 1)))
+        (cone-h (/ (- rad tip) (tan semi))))
+    (difference (round-hole r ctx)
+      (place (placement (placing r) ctx)
+        (translate [0 0 (- (+ bottom cone-h))] (cylinder :h cone-h :r1 tip :r2 rad))))))
+
+(define (pocket-plain? r)
+  (and (== (field r 5 "SOLID_WITH_POCKET" 0) 0) (== (field r 6 "SOLID_WITH_POCKET" 1) 0)))
+(define (solid/SOLID_WITH_CIRCULAR_POCKET r ctx)
+  (let ((depth (* (lf ctx) (hole-depth r))))
+    (if (not (pocket-plain? r))
+      (fail (where r) ": a pocket with a floor blend or draft needs operations GCAD's graph does not have")
+      (difference (solid (base-solid r) ctx)
+        (place (placement (placing r) ctx)
+          (translate [0 0 (- depth)]
+            (cylinder :h depth :r (* (lf ctx) (field r 7 "SOLID_WITH_CIRCULAR_POCKET" 0)))))))))
+(define (solid/SOLID_WITH_RECTANGULAR_POCKET r ctx)
+  (let ((depth (* (lf ctx) (hole-depth r)))
+        (l (* (lf ctx) (field r 7 "SOLID_WITH_RECTANGULAR_POCKET" 0)))
+        (w (* (lf ctx) (field r 8 "SOLID_WITH_RECTANGULAR_POCKET" 1))))
+    (if (or (not (pocket-plain? r)) (!= (field r 9 "SOLID_WITH_RECTANGULAR_POCKET" 2) 0))
+      (fail (where r) ": a pocket with blends, draft or corner radii needs operations GCAD's graph does not have")
+      (difference (solid (base-solid r) ctx)
+        (place (placement (placing r) ctx)
+          (translate [(* -0.5 l) (* -0.5 w) (- depth)] (box [l w depth])))))))
+(define (solid/SOLID_WITH_CIRCULAR_PROTRUSION r ctx)
+  (if (!= (field r 5 "SOLID_WITH_PROTRUSION" 1) 0)
+    (fail (where r) ": a protrusion with draft needs an operation GCAD's graph does not have")
+    (union (solid (base-solid r) ctx)
+      (place (placement (placing r) ctx)
+        (cylinder :h (* (lf ctx) (field r 4 "SOLID_WITH_PROTRUSION" 0))
+                  :r (* (lf ctx) (field r 6 "SOLID_WITH_CIRCULAR_PROTRUSION" 0)))))))
+
+;; ---- what cannot be built: precise diagnostics ---------------------------------------------
+
+(define UNSUPPORTED
+  ["SOLID_WITH_CONSTANT_RADIUS_EDGE_BLEND" "an edge blend (fillet)"
+   "SOLID_WITH_VARIABLE_RADIUS_EDGE_BLEND" "an edge blend (fillet)"
+   "EDGE_BLENDED_SOLID" "an edge blend"
+   "TRACK_BLENDED_SOLID" "an edge blend"
+   "SOLID_WITH_CHAMFERED_EDGES" "a chamfer"
+   "SOLID_WITH_SINGLE_OFFSET_CHAMFER" "a chamfer"
+   "SOLID_WITH_DOUBLE_OFFSET_CHAMFER" "a chamfer"
+   "SOLID_WITH_ANGLE_BASED_CHAMFER" "a chamfer"
+   "SHELLED_SOLID" "shelling (a thickness operation)"
+   "DOUBLE_OFFSET_SHELLED_SOLID" "shelling"
+   "COMPLEX_SHELLED_SOLID" "shelling"
+   "THICKENED_FACE_SOLID" "thickening a face"
+   "OFFSET_FACE_SOLID" "offsetting faces"
+   "SCULPTURED_SOLID" "a sculptured solid"
+   "SOLID_WITH_SLOT" "a slot along a curve"
+   "SOLID_WITH_STRAIGHT_SLOT" "a slot with a cross-section profile"
+   "SOLID_WITH_CURVED_SLOT" "a slot along a curve"
+   "SOLID_WITH_GROOVE" "a groove"
+   "SOLID_WITH_GENERAL_POCKET" "a pocket of a general profile"
+   "SOLID_WITH_GENERAL_PROTRUSION" "a protrusion of a general profile"
+   "SOLID_WITH_RECTANGULAR_PROTRUSION" "a protrusion with corner radii"
+   "SOLID_WITH_SPHERICAL_BOTTOM_ROUND_HOLE" "a spherical hole bottom"
+   "SOLID_WITH_CIRCULAR_PATTERN" "a pattern of features"
+   "SOLID_WITH_RECTANGULAR_PATTERN" "a pattern of features"
+   "SOLID_WITH_INCOMPLETE_CIRCULAR_PATTERN" "a pattern of features"
+   "SOLID_WITH_INCOMPLETE_RECTANGULAR_PATTERN" "a pattern of features"
+   "EXTRUDED_FACE_SOLID" "a face swept from topology (use EXTRUDED_AREA_SOLID)"
+   "REVOLVED_FACE_SOLID" "a face swept from topology (use REVOLVED_AREA_SOLID)"
+   "SURFACE_CURVE_SWEPT_AREA_SOLID" "a sweep along a curve"
+   "SWEPT_DISK_SOLID" "a sweep along a curve"
+   "CYCLIDE_SEGMENT_SOLID" "a cyclide"
+   "ECCENTRIC_CONE" "an eccentric cone"
+   "TRIMMED_VOLUME" "a trimmed B-spline volume"
+   "CREATE_FILLET" "a sketch fillet (an arc)"
+   "CREATE_CHAMFER" "a sketch chamfer of curves"
+   "CREATE_DIVIDED_CURVE" "splitting a sketch curve"
+   "CREATE_ELLIPSE" "an ellipse"
+   "CREATE_ELLIPSE_3_POINTS" "an ellipse"
+   "CREATE_ELLIPSE_CENTRE_POINT" "an ellipse"
+   "CREATE_CIRCLE_CONCENTRIC" "a circle concentric with an earlier sketch curve"
+   "CREATE_CIRCLE_3_TANGENTS" "a circle tangent to three curves"
+   "CREATE_PATTERN_CIRCULAR" "a pattern of sketch curves"
+   "CREATE_PATTERN_RECTANGULAR" "a pattern of sketch curves"
+   "SKETCH_TRANSFORM_TRANSLATE" "moving earlier sketch curves"
+   "SKETCH_TRANSFORM_ROTATE" "moving earlier sketch curves"
+   "SKETCH_TRANSFORM_MIRROR" "moving earlier sketch curves"
+   "SKETCH_TRANSFORM_SCALE" "moving earlier sketch curves"])
+(define (unsupported-why r (i 0))
+  (let ((names (for ((p (partials r))) (kw p))))
+    (if (>= i (len UNSUPPORTED))
+      (str (if (complex? r) (str "(" (apply str (for ((n names)) (str n " "))) ")") (kw r))
+           " is not a solid GCAD can build")
+      (if (any names (fn (n) (== n (get UNSUPPORTED i))))
+        (str (get UNSUPPORTED i) " is " (get UNSUPPORTED (+ i 1))
+             ", which GCAD's geometry graph cannot build (no back-end operation for it)")
+        (unsupported-why r (+ i 2))))))
+
+;; ---- 2D CSG (ISO 10303-42 primitive_2d) ----------------------------------------------------
+
+(define (solid/CIRCULAR_AREA r ctx)
+  (let ((c (point (attr r 1) ctx)) (rad (length r 2 "radius" ctx)) (h (hint-of r "circle")))
+    (place (translation c)
+      (if (and (is_list h) (near rad (harg h "r")))
+        (circle (harg h "r") :$fn (fn-hint h) :$fa (fa-hint h) :$fs (fs-hint h))
+        (circle rad)))))
+(define (solid/RECTANGULAR_AREA r ctx)
+  (let ((m (placement (attr r 1) ctx))
+        (size [(length r 2 "x" ctx) (length r 3 "y" ctx)])
+        (h (hint-of r "rect")))
+    (if (and (is_list h) (near size (harg h "size")))
+      (place-rel m (if (harg h "center") (* -0.5 [(get size 0) (get size 1) 0]) [0 0 0])
+                 (rect (harg h "size") :center (harg h "center")))
+      (place m (rect size)))))
+(define (solid/POLYGONAL_AREA r ctx)
+  (let ((pts (for ((p (attr r 1))) (let ((q (point p ctx))) [(get q 0) (get q 1)])))
+        (h (hint-of r "polygon")))
+    (if (and (is_list h) (near pts (harg h "points")))
+      (if (is_undef (harg h "paths")) (polygon (harg h "points")) (polygon (harg h "points") (harg h "paths")))
+      (polygon pts))))
+(define (solid/ELLIPTIC_AREA r ctx)
+  (let ((a (length r 2 "semi_axis_1" ctx)) (b (length r 3 "semi_axis_2" ctx)))
+    (place (placement (attr r 1) ctx) (scale [1 (/ b a)] (circle a)))))
+
+;; ---- ISO 10303-108 parameters, ISO 10303-50 and ISO 13584-20 expressions -------------------
+; A free-form assignment or an equal-parameter constraint gives a bound parameter a value; the
+; parameter's environment ties it to an instance's attribute, which then takes that value. So a
+; slider on an unbound parameter's current value drives the geometry (SPEC FR-I6).
+
+(define PARAMETERS ["VARIATIONAL_PARAMETER" "UNBOUND_VARIATIONAL_PARAMETER" "BOUND_VARIATIONAL_PARAMETER"])
+(define (param-value p)
+  (if (is-any p PARAMETERS)
+    (let ((v (val (field p 4 "VARIATIONAL_PARAMETER" 1))))
+      (if (is_num v) v (fail (where p) ": the parameter has no numeric current value")))
+    (fail (where p) ": not a variational parameter")))
+
+(define (expr e)
+  (at e
+    (if (is-any e PARAMETERS) (param-value e)
+      (let ((names (for ((p (partials e))) (kw p)))
+            (known (filter names (fn (n) (is_function (resolve (str "expr/" n)))))))
+        (if (> (len known) 0)
+          ((resolve (str "expr/" (first known))) (part e (first known)))
+          (fail (where e) ": not an expression GCAD evaluates"))))))
+(define (operands e) (for ((o (attr e 0))) (expr o)))
+(define RAD (/ 180 PI))
+(define (expr/REAL_LITERAL e) (attr e 0))
+(define (expr/INT_LITERAL e) (attr e 0))
+(define (expr/PLUS_EXPRESSION e) (apply + (operands e)))
+(define (expr/MULT_EXPRESSION e) (apply * (operands e)))
+(define (expr/MINUS_EXPRESSION e) (apply - (operands e)))
+(define (expr/SLASH_EXPRESSION e) (apply / (operands e)))
+(define (expr/DIV_EXPRESSION e) (floor (apply / (operands e))))
+(define (expr/MOD_EXPRESSION e) (apply % (operands e)))
+(define (expr/POWER_EXPRESSION e) (apply pow (operands e)))
+(define (expr/MINUS_FUNCTION e) (- (expr (attr e 0))))
+(define (expr/ABS_FUNCTION e) (abs (expr (attr e 0))))
+(define (expr/SQUARE_ROOT_FUNCTION e) (sqrt (expr (attr e 0))))
+(define (expr/EXP_FUNCTION e) (exp (expr (attr e 0))))
+(define (expr/LOG_FUNCTION e) (ln (expr (attr e 0))))
+(define (expr/LOG10_FUNCTION e) (log (expr (attr e 0))))
+(define (expr/LOG2_FUNCTION e) (/ (ln (expr (attr e 0))) (ln 2)))
+; EXPRESS's trigonometric functions take and give radians; GCore's take degrees.
+(define (expr/SIN_FUNCTION e) (sin (* RAD (expr (attr e 0)))))
+(define (expr/COS_FUNCTION e) (cos (* RAD (expr (attr e 0)))))
+(define (expr/TAN_FUNCTION e) (tan (* RAD (expr (attr e 0)))))
+(define (expr/ASIN_FUNCTION e) (/ (asin (expr (attr e 0))) RAD))
+(define (expr/ACOS_FUNCTION e) (/ (acos (expr (attr e 0))) RAD))
+(define (expr/ATAN_FUNCTION e) (/ (apply atan2 (operands e)) RAD))
+(define (expr/MAXIMUM_FUNCTION e) (apply max (operands e)))
+(define (expr/MINIMUM_FUNCTION e) (apply min (operands e)))
+
+(define (bound-attribute p environments)
+  ; [owner id, attribute name] of the attribute a bound parameter is tied to
+  (let ((env (filter environments (fn (b) (== (rid (attr b 0)) (rid p))))))
+    (if (== (len env) 0) undef
+      (let ((ref (attr (first env) 1)))
+        (if (is ref "INSTANCE_ATTRIBUTE_REFERENCE")
+          [(rid (attr ref 1)) (lower (last (split (attr ref 0) ".")))]
+          undef)))))
+(define (overrides records)
+  (let ((environments (filter records (fn (r) (is r "BOUND_PARAMETER_ENVIRONMENT"))))
+        (assignments (filter records (fn (r) (is-any r ["FREE_FORM_ASSIGNMENT" "EQUAL_PARAMETER_CONSTRAINT"])))))
+    (apply concat
+      (for ((a assignments))
+        (at a
+          (let ((value (if (is a "FREE_FORM_ASSIGNMENT")
+                         (expr (field a 4 "FREE_FORM_CONSTRAINT" 0))
+                         (param-value (first (field a 3 "EXPLICIT_CONSTRAINT" 2))))))
+            (apply concat
+              (for ((p (field a 2 "EXPLICIT_CONSTRAINT" 1)))
+                (let ((b (bound-attribute p environments)))
+                  (if (is_undef b) [] [[(first b) (get b 1) value]]))))))))))
+
+;; ---- colours (ISO 10303-46 styled items, as AP242 carries them) ----------------------------
+
+(define (first-list xs) (first (filter xs is_list)))
+; the first COLOUR_RGB within a few levels of a presentation style, as [r g b 1]
+(define (find-colour x (depth 0))
+  (if (> depth 16) undef
+    (if (is_record x)
+      (if (is x "COLOUR_RGB")
+        (let ((c (part x "COLOUR_RGB"))) [(attr c 1) (attr c 2) (attr c 3) 1])
+        (first-list (for ((y (if (complex? x) (partials x) (attrs x)))) (find-colour y (+ depth 1)))))
+      (if (is_list x) (first-list (for ((y x)) (find-colour y (+ depth 1)))) undef))))
+(define (styles records)
+  (apply concat
+    (for ((s (filter records (fn (r) (is r "STYLED_ITEM")))))
+      (let ((c (find-colour (attr s 1))))
+        (if (is_list c) [[(rid (attr s 2)) c]] [])))))
+
+;; ---- the model: which representations are shown -------------------------------------------
+; Procedural (Part 55) representations first, then CSG, then explicit B-rep; when a file carries
+; several kinds, the most parametric is shown and the console says what was left out.
+
+(define PROCEDURAL ["PROCEDURAL_SHAPE_REPRESENTATION"])
+(define REPRESENTATIONS ["SHAPE_REPRESENTATION" "CSG_SHAPE_REPRESENTATION" "CSG_2D_SHAPE_REPRESENTATION"
+                         "ADVANCED_BREP_SHAPE_REPRESENTATION" "FACETED_BREP_SHAPE_REPRESENTATION"
+                         "MANIFOLD_SURFACE_SHAPE_REPRESENTATION" "PROCEDURAL_SHAPE_REPRESENTATION"])
+(define CSG_ITEMS ["CSG_SOLID" "BOOLEAN_RESULT" "CSG_SOLID_2D" "BOOLEAN_RESULT_2D" "CSG_PRIMITIVE_SOLID_2D" "BLOCK" "SPHERE" "RIGHT_CIRCULAR_CYLINDER"
+                   "RIGHT_CIRCULAR_CONE" "TORUS" "RIGHT_ANGULAR_WEDGE" "ELLIPSOID" "RECTANGULAR_PYRAMID"
+                   "TETRAHEDRON" "SOLID_REPLICA" "EXTRUDED_AREA_SOLID" "REVOLVED_AREA_SOLID"
+                   "HALF_SPACE_SOLID" "CIRCULAR_AREA" "RECTANGULAR_AREA" "POLYGONAL_AREA" "ELLIPTIC_AREA"
+                   "MODIFIED_SOLID"])
+
+(define (shape-reps records)
+  (filter records (fn (r) (and (is-any r REPRESENTATIONS) (not (is r "VARIATIONAL_REPRESENTATION"))))))
+(define (items rep) (attr (first (filter (partials rep) (fn (p) (> (len p) 3)))) 1))
+(define (item-kind i)
+  (if (is i "PROCEDURAL_REPRESENTATION_SEQUENCE") "procedural"
+    (if (or (is-any i CSG_ITEMS) (any (partials i) (fn (p) (starts_with (kw p) "SOLID_WITH_")))) "csg"
+      (if (is-any i BREPS) "brep" "other"))))
+(define (unique-items xs (seen []) (i 0))
+  (if (>= i (len xs)) []
+    (let ((x (get xs i)))
+      (if (any seen (fn (s) (== s (rid x))))
+        (unique-items xs seen (+ i 1))
+        (concat [x] (unique-items xs (concat seen [(rid x)]) (+ i 1)))))))
+(define (units-of rep) (context-units (attr (first (filter (partials rep) (fn (p) (> (len p) 3)))) 2)))
+
+; The kinds of record the model is built from; one pass picks them out of the whole file.
+(define RELEVANT (concat REPRESENTATIONS ["FREE_FORM_ASSIGNMENT" "EQUAL_PARAMETER_CONSTRAINT"
+                  "BOUND_PARAMETER_ENVIRONMENT" "STYLED_ITEM" "MAPPED_ITEM"
+                  "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION" "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION"]))
+(define (step-model header all)
+  (let ((records (filter all (fn (r) (if (complex? r) (any (kinds r) (fn (k) (contains RELEVANT k)))
+                                           (contains RELEVANT (kw r))))))
+        (ov (overrides records))
+        (st (styles records))
+        (reps (shape-reps records))
+        (pairs (apply concat (for ((rep reps)) (for ((i (items rep))) [rep i]))))
+        (kinds ["procedural" "csg" "brep"])
+        (chosen (first (filter kinds (fn (k) (any pairs (fn (p) (== (item-kind (get p 1)) k)))))))
+        (skipped (filter kinds (fn (k) (and (!= k chosen) (any pairs (fn (p) (== (item-kind (get p 1)) k))))))))
+    (if (is_undef chosen)
+      (fail "the file has no shape GCAD can show: no procedural, CSG or B-rep representation")
+      (let ((shown (filter pairs (fn (p) (== (item-kind (get p 1)) chosen))))
+            (seq-elements (apply concat (for ((p shown)) (if (is (get p 1) "PROCEDURAL_REPRESENTATION_SEQUENCE")
+                                                         (for ((e (seq-elements (get p 1)))) (rid e)) []))))
+            (tops (filter shown (fn (p) (not (any seq-elements (fn (s) (== s (rid (get p 1)))))))))
+            (unique (unique-items (for ((p tops)) (get p 1))))
+            (ctx-for (fn (i) (let ((p (first (filter tops (fn (q) (== (rid (get q 1)) (rid i))))))
+                                   (u (units-of (first p))))
+                               [(first u) (get u 1) ov st]))))
+        (if (> (len skipped) 0)
+          (info "also in the file, not shown: the " (apply str (for ((k skipped)) (str k " ")))
+                "representation; the " chosen " one is shown"))
+        (if (== chosen "brep")
+          (at (first (first tops))
+            (info "explicit B-rep: " (len unique) " solid(s), read by OpenCASCADE"
+                  (if (assembly? records) " with the assembly's placements" ""))
+            (import_source "step"))
+          (for ((i unique)) (solid i (ctx-for i))))))))
+; Parts placed in an assembly: OpenCASCADE reads the whole file and composes it.
+(define (assembly? records)
+  (any records (fn (r) (is-any r ["MAPPED_ITEM" "REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION"
+                                  "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION"]))))

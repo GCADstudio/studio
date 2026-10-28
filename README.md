@@ -46,8 +46,22 @@ Pre-alpha, version 0.1.0: milestones M0 to M6 of [the plan](docs/SPEC.md#12-deli
 | 2D models and sections of 3D models; 2D export: DXF, SVG, PDF, EPS, CGM |
 | `gcad` command line, headless |
 | The web studio: the same UI and Python core in the browser (Pyodide), a static site for GitHub Pages; no STEP or IGES there |
+| Kernel `iso10303` (`.stp`, `.step`, `.p21`, proposed M14): STEP files with ISO 10303-42 CSG, -55 histories, -108 parameters, -111 holes and pockets, -112 sketches; explicit B-rep through OpenCASCADE; checked against the AP242 long form with every rule evaluated. Export `step-parametric` writes models back as parametric STEP. [Coverage, entity by entity](docs/design/iso10303-coverage.tsv) |
 
 Run `gcad formats` to see every format and which back-ends are available.
+
+### STEP, parametric
+
+Open a STEP file like any source: CSG, a Part 55 history or explicit B-rep becomes the model, and a slider on an ISO 10303-108 parameter's value drives it. Write any model back as parametric STEP, with its numeric definitions as parameters:
+
+```bash
+gcad iso schema fetch AP242                       # once: the AP242 long form ISO publishes, for checking
+gcad eval part.stp                                # the model, and every AP242 rule evaluated
+gcad export part.mscad -f step-parametric -o part.stp
+gcad iso check part.stp                           # header, schema and rules, with counts
+```
+
+The design, the grammar's trace to the standard and what is verified how are in [docs/design/iso10303-kernel.md](docs/design/iso10303-kernel.md).
 
 ## Install
 

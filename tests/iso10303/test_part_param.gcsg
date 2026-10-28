@@ -1,0 +1,7 @@
+; SPEC AC-2 test part with the hole diameter as a parameter. Exported with
+;   gcad export test_part_param.gcsg -f step-parametric --epoch 1792800000 -o test_part.stp
+; it is the iso10303 kernel's examples/test_part.stp: hole_d becomes an ISO 10303-108 parameter.
+(define hole_d 8)
+(difference
+  (box [40 30 10])
+  (translate [20 15 -1] (cylinder :h 12 :d hole_d)))

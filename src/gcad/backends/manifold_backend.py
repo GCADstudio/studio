@@ -83,9 +83,10 @@ class ManifoldModel:
 
 
 class _Realizer:
-    def __init__(self, tolerance: float) -> None:
+    def __init__(self, tolerance: float, blobs: dict[str, bytes] | None = None) -> None:
         self.tolerance = tolerance
         self.origins: dict[int, MeshGroup] = {}
+        self.blobs = blobs or {}
 
     def tag(self, m: mf.Manifold, node: Node, color: RGBA | None) -> mf.Manifold:
         m = m.as_original()
@@ -158,6 +159,43 @@ class _Realizer:
             )
         return self.polyhedron(node)
 
+    def imported(self, node: Node) -> mf.Manifold:
+        """Geometry handed over as a file (an `import` node). A triangle mesh is read as it
+        is. Explicit B-rep (STEP) is read and tessellated by OpenCASCADE, as for any mesh
+        export from back-end B; without OpenCASCADE (the web studio, Windows on ARM) nothing
+        here can read it."""
+        fmt, digest = str(node.arg("format")), str(node.arg("data"))
+        if digest not in self.blobs:
+            raise GcadError("the data this import reads is not in the graph", node.span)
+        if fmt != "step":
+            return self.imported_mesh(node, fmt, digest)
+        try:
+            from gcad.backends.occt_backend import OcctModel, read_step
+        except ImportError:
+            raise GcadError(
+                "explicit B-rep geometry is read by OpenCASCADE (back-end occt), which is not "
+                "available here; the browser studio shows CSG and procedural models only",
+                node.span,
+            ) from None
+        shape = read_step(self.blobs[digest], int(node.num("entity")), digest, node.span)
+        mesh = OcctModel(shape, 3, self.tolerance, node.id, None, None).mesh()
+        try:
+            m = mf.Manifold(
+                mf.Mesh(
+                    vert_properties=np.asarray(mesh.vertices, dtype=np.float32),
+                    tri_verts=np.asarray(mesh.triangles, dtype=np.uint32),
+                )
+            )
+        except Exception as exc:  # manifold3d raises its own error types
+            raise GcadError(f"the imported B-rep is not a closed solid: {exc}", node.span) from None
+        if m.status() != mf.Error.NoError:
+            raise GcadError(
+                "the imported B-rep is not a closed solid, so the mesh back-end cannot use it in "
+                "booleans; use --backend occt",
+                node.span,
+            )
+        return m
+
     def polyhedron(self, node: Node) -> mf.Manifold:
         points = np.asarray(node.rows("points"), dtype=np.float32)
         tris: list[list[int]] = []
@@ -175,19 +213,8 @@ class _Realizer:
             )
         return result
 
-    def imported(self, node: Node) -> mf.Manifold:
-        """Geometry handed over as a file. A STEP solid is tessellated by OpenCASCADE."""
-        fmt, digest = str(node.arg("format")), str(node.arg("sha256"))
-        if fmt == "step":
-            try:
-                from gcad.backends.occt_backend import step_mesh
-            except ImportError:
-                raise GcadError(
-                    "this model is a STEP solid, and OpenCASCADE is not installed here", node.span
-                ) from None
-            vertices, tris = step_mesh(digest, self.tolerance)
-        else:
-            vertices, tris = imported_mesh(digest, fmt)
+    def imported_mesh(self, node: Node, fmt: str, digest: str) -> mf.Manifold:
+        vertices, tris = imported_mesh(self.blobs[digest], digest, fmt)
         mesh = mf.Mesh(
             vert_properties=np.asarray(vertices, dtype=np.float32),
             tri_verts=np.asarray(tris, dtype=np.uint32),
@@ -233,6 +260,6 @@ class ManifoldBackend:
         tol = tolerance if tolerance is not None else default_tolerance(graph)
         if tol <= 0:
             raise GcadError("tessellation tolerance must be positive")
-        realizer = _Realizer(tol)
+        realizer = _Realizer(tol, graph.blobs)
         shape = realizer.build(graph.root, None)
         return ManifoldModel(shape, graph.root.dim, realizer.origins, graph.root.id)

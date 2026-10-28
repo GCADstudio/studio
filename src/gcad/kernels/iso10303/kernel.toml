@@ -1,0 +1,10 @@
+id = "iso10303"
+name = "ISO 10303-21 (STEP)"
+version = "0.1.0"
+description = "STEP exchange files (ISO 10303-21:2002): CSG (Part 42), procedural and hybrid history (Part 55), parameters and constraints (Part 108), features (Part 111), sketch commands (Part 112) and expressions (Part 50, ISO 13584-20); explicit B-rep through back-end B. Checked against the EXPRESS schemas the header names."
+extensions = [".stp", ".step", ".p21"]
+comment = "/*"
+parser = "lalr"
+# The semantic layer the engine runs after parsing: header, form and rules against the
+# EXPRESS schemas the file names (SPEC FR-K9, FR-I4).
+checker = "iso10303-21"

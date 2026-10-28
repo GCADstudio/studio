@@ -111,6 +111,9 @@ class Graph:
     root: Node
     units: str = "mm"
     metadata: dict[str, str] = field(default_factory=dict)
+    #: content an `import` node reads, by the SHA-256 in its `data` argument; the digest is part
+    #: of the node, so the graph hash covers the content without carrying it
+    blobs: dict[str, bytes] = field(default_factory=dict)
 
     def walk(self) -> Iterator[Node]:
         """Every node object once, children before parents."""

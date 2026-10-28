@@ -57,6 +57,9 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - name: Record platform
         run: python -c "import platform, sys; print(platform.platform(), platform.machine(), sys.version)"
+      - name: The AP242 long form, for the ISO 10303 conformance tests (fetched, never committed)
+        # If ISO's site is unreachable the schema-dependent tests skip and say why.
+        run: gcad iso schema fetch AP242 || echo "AP242 long form not fetched"
       - run: pytest -q -rs
         env:
           GCAD_REQUIRE_READERS: "1"
@@ -64,7 +67,7 @@ jobs:
         shell: bash
         run: |
           gcad kernels
-          for kernel in csg minscad parts; do
+          for kernel in csg minscad parts iso10303; do
             gcad kernel check "src/gcad/kernels/$kernel"
           done
           gcad formats
@@ -130,6 +133,7 @@ jobs:
           key: site-assets-${{ hashFiles('tools/site-assets.toml') }}
       - name: Build the site
         run: python tools/build_site.py --out site
+      - run: gcad iso schema fetch AP242 || echo "AP242 long form not fetched"
       - run: pytest -q -rs tests/test_web.py
         env:
           GCAD_SITE: site
