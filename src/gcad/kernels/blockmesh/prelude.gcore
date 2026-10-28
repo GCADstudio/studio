@@ -1,0 +1,491 @@
+; The geometry of OpenFOAM's blockMesh, written in GCore. rewrite.toml turns the dictionary
+; into defines and calls of the names below; every name the kernel adds starts with "/", which
+; no OpenFOAM keyword can contain.
+;
+; A function that can fail returns a string, the error message, and the template that called
+; it asserts on it, so the error points at the user's line (/ok tells the two apart).
+;
+; Sources: OpenFOAM-dev src/mesh/blockMesh (blockDescriptor, blockCreate, arcEdge, polyLine,
+; lineDivide) and etc/cellModels; OpenFOAM.com (ESI) arcEdge for "arc ... origin".
+
+; ---------- built-ins under names a dictionary cannot redefine ----------
+
+(define /assert assert)
+(define /name name)
+(define /color color)
+(define /polyhedron polyhedron)
+(define /get get)
+(define /str str)
+(define /concat concat)
+(define /none undef)
+
+; ---------- defaults for entries a dictionary may leave out ----------
+
+(define /vertices [])
+(define /edges [])
+(define /blocks [])
+(define /scale undef)
+(define /convertToMeters undef)
+(define /units undef)
+
+; ---------- small helpers ----------
+
+(define (/ok x) (not (is_string x)))
+(define (/cons x xs) (concat [x] xs))
+(define (/seq a (b undef)) (if (is_undef b) a b))
+(define (/entry vs) (if (== (len vs) 1) (get vs 0) vs))
+(define (/upto n) (range 0 (- n 1)))
+(define (/flat xss) (for ((xs xss) (x xs)) x))
+(define (/int? x) (and (is_num x) (== x (floor x))))
+(define (/unit-vector v) (* (/ 1 (norm v)) v))
+(define (/reverse xs) (for ((i (/upto (len xs)))) (get xs (- (len xs) 1 i))))
+(define (/index-of x xs)
+  (let ((hits (for ((i (/upto (len xs))) (k (if (== (get xs i) x) [i] []))) k)))
+    (if (== (len hits) 0) -1 (get hits 0))))
+
+; A value computed by #calc, #eval, #codeStream or ${...}: a marker, so that it is an error
+; only where geometry needs it.
+(define (/unsupported what) ["/unsupported" what])
+(define (/marker? x) (and (is_list x) (== (len x) 2) (== (get x 0) "/unsupported")))
+(define (/neg x) (if (/marker? x) x (- x)))
+(define (/why x what)
+  (if (/marker? x)
+    (str what " is computed by " (get x 1) ", which is not supported")
+    (str what " must be a number")))
+
+; $dict/key: the last entry of that name, as in OpenFOAM, where a later entry replaces one.
+(define (/lookup d key)
+  (let ((hits (if (is_list d)
+                (for ((p d) (k (if (and (is_list p) (== (len p) 2) (== (get p 0) key)) [p] []))) k)
+                [])))
+    (if (== (len hits) 0)
+      (str "no entry '" key "' in this dictionary")
+      (get (get hits (- (len hits) 1)) 1))))
+
+; ---------- units ----------
+
+; units [mm]: metres per unit
+(define (/unit u)
+  (let ((i (/index-of u ["m" "cm" "mm" "um" "km"])))
+    (if (< i 0)
+      (str "units [" u "] are not supported; use [m], [cm], [mm], [um] or [km]")
+      (get [1 0.01 0.001 0.000001 1000] i))))
+
+; Millimetres per OpenFOAM length unit: 1000 times scale, convertToMeters or units.
+(define (/factor given)
+  (let ((set (for ((x given) (k (if (is_undef x) [] [x]))) k)))
+    (if (> (len set) 1)
+      "give only one of scale, convertToMeters and units"
+      (if (== (len set) 0)
+        1000
+        (let ((s (get set 0)))
+          (if (not (is_num s))
+            (/why s "scale")
+            (if (<= s 0) "scale must be positive" (* 1000 s))))))))
+
+; ---------- vertices ----------
+
+(define (/point? p) (and (is_list p) (== (len p) 3) (is_num (get p 0)) (is_num (get p 1)) (is_num (get p 2))))
+(define (/point-problem p what)
+  (if (and (is_list p) (== (len p) 3))
+    (let ((bad (for ((x p) (k (if (is_num x) [] [x]))) k)))
+      (/why (get bad 0) (str "a coordinate of " what)))
+    (if (/marker? p)
+      (/why p what)
+      (str what " must be three numbers (x y z)"))))
+
+(define (/vertex name p)
+  (if (/point? p) [name p] (/point-problem p "a vertex")))
+
+; A vertex label: its index, or its name (name v0 (x y z)). Returns the index or a message.
+(define (/label V l)
+  (if (is_string l)
+    (let ((i (/index-of l (for ((v V)) (get v 0)))))
+      (if (< i 0) (str "no vertex is named " l) i))
+    (if (/marker? l)
+      (/why l "a vertex label")
+      (if (not (/int? l))
+        "a vertex label must be a whole number or a vertex name"
+        (if (or (< l 0) (>= l (len V)))
+          (str "vertex " l " does not exist; the vertices are numbered 0 to " (- (len V) 1))
+          l)))))
+
+(define (/labels V ls)
+  (let ((out (for ((l ls)) (/label V l)))
+        (bad (for ((x out) (k (if (is_string x) [x] []))) k)))
+    (if (> (len bad) 0) (get bad 0) out)))
+
+; ---------- edges ----------
+; An edge record is [start end position-function segments]: position(t), 0 <= t <= 1, is
+; blockMesh's own parameter (arc angle, or length along a polyLine), and segments is how many
+; straight pieces approximate it well.
+
+(define /arc-step 7.5)   ; degrees of arc per straight piece
+(define /max-segments 24)
+
+(define (/segments-for angle) (min /max-segments (max 2 (ceil (/ angle /arc-step)))))
+
+(define (/ends V a b)
+  (let ((ia (/label V a)) (ib (/label V b)))
+    (if (is_string ia) ia
+      (if (is_string ib) ib
+        (if (== ia ib) "an edge needs two different vertices" [ia ib])))))
+
+; A circle arc about centre c through p0 (t = 0), turning by angle (degrees) about axis.
+(define (/circle-arc ia ib c p0 radius angle axis)
+  (let ((e1 (/unit-vector (- p0 c)))
+        (e2 (cross (/unit-vector axis) e1)))
+    [ia ib
+     (fn (t) (+ c (* radius (+ (* (cos (* t angle)) e1) (* (sin (* t angle)) e2)))))
+     (/segments-for angle)]))
+
+; arc a b (p): the circle through both ends and p (OpenFOAM-dev and OpenFOAM.com agree).
+(define (/arc3 V a b pm)
+  (let ((ends (/ends V a b)))
+    (if (is_string ends) ends
+      (if (not (/point? pm)) (/point-problem pm "the arc's middle point")
+        (let ((p1 (get (get V (get ends 0)) 1))
+              (p3 (get (get V (get ends 1)) 1))
+              (u (- pm p1))
+              (w (- p3 p1))
+              (uu (* u u)) (ww (* w w)) (uw (* u w))
+              (denom (- (* uu ww) (* uw uw))))
+          (if (<= (abs denom) (* 1e-12 uu ww))
+            "the arc's three points lie on a line"
+            (let ((c (+ p1 (* 0.5 u) (* (/ (* 0.5 (- ww uw)) denom) (cross (cross u w) u))))
+                  (r1 (- p1 c)) (r2 (- pm c)) (r3 (- p3 c))
+                  (cos13 (/ (* r1 r3) (* (norm r1) (norm r3))))
+                  (short (acos (max -1 (min 1 cos13))))
+                  (angle (if (< (* (cross r1 r2) (cross r1 r3)) 0) (- 360 short) short))
+                  (axis (if (<= angle 180)
+                          (if (< (/ (norm (cross r1 r3)) (* (norm r1) (norm r3))) 0.001)
+                            (cross r1 r2)
+                            (cross r1 r3))
+                          (- (cross r1 r3)))))
+              (/circle-arc (get ends 0) (get ends 1) c p1 (norm r3) angle axis))))))))
+
+; arc a b origin [factor] (c), OpenFOAM.com: the centre moves along the chord's bisector
+; until both ends are equally far, and a factor scales that radius.
+(define (/arc-origin V a b factor c0)
+  (let ((ends (/ends V a b)))
+    (if (is_string ends) ends
+      (if (not (/point? c0)) (/point-problem c0 "the arc's origin")
+        (let ((p1 (get (get V (get ends 0)) 1))
+              (p3 (get (get V (get ends 1)) 1))
+              (f (if (== (len factor) 0) 1 (get factor 0)))
+              (chord (- p3 p1))
+              (m1 (norm (- p1 c0))) (m3 (norm (- p3 c0)))
+              (axis0 (cross (- p1 c0) (- p3 c0)))
+              (r0 (* f (* 0.5 (+ m1 m3))))
+              (radius (if (== f 1) r0 (max r0 (* 1.001 0.5 (norm chord)))))
+              (c (if (and (== m1 m3) (== f 1))
+                   c0
+                   (+ (* 0.5 (+ p1 p3))
+                      (* (sqrt (max 0 (- (* radius radius) (* 0.25 (* chord chord)))))
+                         (/unit-vector (cross axis0 chord))))))
+              (r1 (- p1 c)) (r3 (- p3 c))
+              (axis (cross r1 r3)))
+          (if (< (norm axis) (* 1e-9 (norm r1) (norm r3)))
+            "an arc of 0 or 180 degrees needs a middle point, not an origin"
+            (/circle-arc (get ends 0) (get ends 1) c p1 (* 0.5 (+ (norm r1) (norm r3)))
+                         (acos (max -1 (min 1 (/ (* r1 r3) (* (norm r1) (norm r3)))))) axis)))))))
+
+; arc a b angle (axis), OpenFOAM-dev: turns by angle about axis, rising along the axis when
+; the ends are at different heights (a helix).
+(define (/arc-angle V a b theta axis0)
+  (let ((ends (/ends V a b)))
+    (if (is_string ends) ends
+      (if (not (is_num theta)) (/why theta "the arc's angle")
+        (if (not (/point? axis0)) (/point-problem axis0 "the arc's axis")
+          (if (or (<= theta 0) (>= theta 360)) "the arc's angle must be between 0 and 360 degrees"
+            (let ((p0 (get (get V (get ends 0)) 1))
+                  (p1 (get (get V (get ends 1)) 1))
+                  (axis (/unit-vector axis0))
+                  (dp (- p1 p0))
+                  (l (* dp axis))
+                  (chord (- dp (* l axis)))
+                  (rM (/unit-vector (cross dp axis)))
+                  (c (- (* 0.5 (+ p0 p1)) (* (/ l 2) axis) (* (/ (norm chord) (* 2 (tan (/ theta 2)))) rM)))
+                  (r1 (- p0 c))
+                  (r2 (cross axis r1)))
+              [(get ends 0) (get ends 1)
+               (fn (t) (+ c (* (cos (* t theta)) r1) (* (sin (* t theta)) r2) (* (* l t) axis)))
+               (/segments-for theta)])))))))
+
+; polyLine a b ((x y z) ...): straight pieces, the parameter running by length.
+(define (/polyline V a b pts)
+  (let ((ends (/ends V a b))
+        (bad (for ((p pts) (k (if (/point? p) [] [p]))) k)))
+    (if (is_string ends) ends
+      (if (> (len bad) 0) (/point-problem (get bad 0) "a polyLine point")
+        (let ((knots (concat [(get (get V (get ends 0)) 1)] pts [(get (get V (get ends 1)) 1)]))
+              (n (- (len knots) 1))
+              (lengths (for ((i (/upto n))) (norm (- (get knots (+ i 1)) (get knots i)))))
+              (total (/sum lengths))
+              (starts (for ((i (/upto n))) (/sum lengths i))))
+          (if (<= total 0) "a polyLine needs some length"
+            [(get ends 0) (get ends 1)
+             (fn (t) (/polyline-at knots lengths starts total t))
+             (min /max-segments (max 2 n))]))))))
+
+; The sum of xs, or of its first `upto` entries.
+(define (/sum xs (upto undef)) (/sum-from xs 0 0 (if (is_undef upto) (len xs) upto)))
+(define (/sum-from xs i acc stop)
+  (if (>= i stop) acc (/sum-from xs (+ i 1) (+ acc (get xs i)) stop)))
+
+; polyLine::position: the piece where the length t * total falls, then along it.
+(define (/polyline-at knots lengths starts total t)
+  (let ((s (* t total))
+        (i (max 0 (- (len (for ((x starts) (k (if (< x s) [x] []))) k)) 1)))
+        (f (if (> (get lengths i) 0) (min 1 (/ (- s (get starts i)) (get lengths i))) 0)))
+    (+ (get knots i) (* f (- (get knots (+ i 1)) (get knots i))))))
+
+; line a b: a straight edge, listed explicitly.
+(define (/line V a b)
+  (let ((ends (/ends V a b)))
+    (if (is_string ends) ends [(get ends 0) (get ends 1) undef 1])))
+
+(define (/curved? rec) (not (is_undef (get rec 2))))
+
+; ---------- the hex block (etc/cellModels) ----------
+; Vertices 0..7 sit at (x y z) = (000) (100) (110) (010) (001) (101) (111) (011) of the block's
+; own coordinates. Faces in OpenFOAM's order, each counter-clockwise seen from outside:
+; x-min, x-max, y-min, y-max, z-min, z-max. Edges: 0-3 run along x, 4-7 along y, 8-11 along z.
+
+(define /hex-faces [[0 4 7 3] [1 2 6 5] [0 1 5 4] [3 7 6 2] [0 3 2 1] [4 5 6 7]])
+(define /hex-edges [[0 1] [3 2] [7 6] [4 5] [0 3] [1 2] [5 6] [4 7] [0 4] [1 5] [2 6] [3 7]])
+; Each face as a grid: the edges along its first direction at the start and end of the second
+; direction, then the edges along the second direction at the start and end of the first.
+(define /face-edges [[8 11 4 7] [5 6 9 10] [0 3 8 9] [11 10 1 2] [4 5 0 1] [3 2 7 6]])
+
+; OpenFOAM's face::area and face::centre for a polygon (blockDescriptor::check uses them).
+(define (/mean ps) (* (/ 1 (len ps)) (/vsum ps)))
+(define (/vsum ps) (/vsum-from ps 1 (get ps 0)))
+(define (/vsum-from ps i acc) (if (>= i (len ps)) acc (/vsum-from ps (+ i 1) (+ acc (get ps i)))))
+(define (/face-area ps)
+  (if (== (len ps) 3)
+    (* 0.5 (cross (- (get ps 1) (get ps 0)) (- (get ps 2) (get ps 0))))
+    (let ((pc (/mean ps)) (n (len ps)))
+      (* 0.5 (/vsum (for ((i (/upto n))) (cross (- (get ps i) pc) (- (get ps (% (+ i 1) n)) pc))))))))
+(define (/face-centre ps)
+  (if (== (len ps) 3)
+    (/mean ps)
+    (let ((pc (/mean ps)) (n (len ps))
+          (parts (for ((i (/upto n)))
+                   (let ((p (get ps i)) (q (get ps (% (+ i 1) n))))
+                     [(norm (cross (- p pc) (- q pc))) (+ p q pc)])))
+          (total (/sum (for ((x parts)) (get x 0)))))
+      (if (> total 1e-300)
+        (* (/ 1 (* 3 total)) (/vsum (for ((x parts)) (* (get x 0) (get x 1)))))
+        pc))))
+
+; blockDescriptor::check: a face points outwards when it points away from another face's
+; centre; a face of zero area (a collapsed vertex) counts as outwards.
+(define (/orientation-problem P)
+  (let ((faces (for ((f /hex-faces)) (for ((v f)) (get P v))))
+        (centres (for ((f faces)) (/face-centre f)))
+        (out (for ((i (/upto 6)))
+               (let ((a (/face-area (get faces i))))
+                 (or (<= (norm a) 1e-15)
+                     (> (len (for ((j (/upto 6))
+                                   (k (if (and (!= i j) (> (* (- (get centres i) (get centres j)) a) 0)) [j] [])))
+                               k))
+                        0)))))
+        (n (len (for ((o out) (k (if o [1] []))) k))))
+    (if (== n 0) "this block is inside-out: list its vertices in the other order"
+      (if (< n 6) "this block has inward-pointing faces: check the order of its vertices" undef))))
+
+; ---------- a block's solid ----------
+; m is the model /build prepared: [vertex points in OpenFOAM units, the same in mm, edge
+; records, edges by vertex, segments, grid topology]. Returns [points faces] for polyhedron,
+; faces clockwise seen from outside as GCore expects, or a message.
+
+(define (/block m i labels)
+  (let ((V (get m 0)))
+    (if (not (and (is_list labels) (== (len labels) 8)))
+      (if (/marker? labels) (/why labels "the block's vertex list") "a hex block needs 8 vertex labels")
+      (let ((g (/labels V labels)))
+        (if (is_string g) g
+          (let ((problem (/orientation-problem (for ((k g)) (get (get V k) 1)))))
+            (if (not (is_undef problem)) problem
+              (let ((curves (for ((e /hex-edges)) (/edge-record m (get g (get e 0)) (get g (get e 1)))))
+                    (curved (> (len (for ((c curves) (k (if (/curved? c) [1] []))) k)) 0))
+                    (P (for ((k g)) (get (get m 1) k))))
+                (if curved
+                  (if (< (len (/distinct g)) 8)
+                    "a block with collapsed vertices cannot have curved edges here"
+                    (/curved-block m g P curves))
+                  (/straight-block g P))))))))))
+
+(define (/distinct xs)
+  (for ((i (/upto (len xs))) (k (if (== (/index-of (get xs i) xs) i) [(get xs i)] []))) k))
+
+; The first edge listed between global vertices a and b, either way round, as
+; [start end function segments index reversed?]; a straight edge when none is listed.
+(define (/edge-record m a b)
+  (let ((hits (for ((rec (get (get m 3) a))
+                    (k (if (or (and (== (get rec 0) a) (== (get rec 1) b))
+                               (and (== (get rec 0) b) (== (get rec 1) a)))
+                         [rec] [])))
+                k)))
+    (if (== (len hits) 0)
+      [a b undef 1 -1 false]
+      (let ((rec (get hits 0)))
+        (concat rec [(!= (get rec 0) a)])))))
+
+; Straight edges: plane faces stay quadrilaterals; a face that is not plane is split into four
+; triangles about the mean of its corners, which bounds exactly the volume of the bilinear
+; surface blockMesh's cells approach. Collapsed vertices (prism and wedge blocks) merge.
+(define (/straight-block g P)
+  (let ((uniq (/distinct g))
+        (pos (for ((k g)) (/index-of k uniq)))
+        (points (for ((k uniq)) (get P (/index-of k g))))
+        (faces (for ((f /hex-faces)
+                     (k (let ((c (/collapse (for ((v f)) (get pos v)))))
+                          (if (< (len c) 3) [] [c]))))
+                 k)))
+    (if (< (len faces) 4) "this block has collapsed to less than a solid"
+      (/emit-faces points faces uniq))))
+
+; Drop repeated corners of a face, cyclically.
+(define (/collapse f)
+  (let ((n (len f)))
+    (for ((i (/upto n)) (k (if (== (get f i) (get f (% (+ i 1) n))) [] [(get f i)]))) k)))
+
+(define (/emit-faces points faces uniq)
+  (let ((n (len points))
+        (bent (for ((f faces) (k (if (and (== (len f) 4) (not (/plane? (for ((v f)) (get points v))))) [f] []))) k))
+        (centres (for ((f bent)) (/canonical-mean f points uniq)))
+        (out (/flat (for ((f faces))
+                      (let ((b (/index-of f bent)))
+                        (if (< b 0)
+                          [(/reverse f)]
+                          (let ((c (+ n b)))
+                            (for ((i (/upto 4)))
+                              [c (get f (% (+ i 1) 4)) (get f i)]))))))))
+    [(concat points centres) out]))
+
+(define (/plane? ps)
+  (let ((a (get ps 0))
+        (size (max (norm (- (get ps 2) a)) (norm (- (get ps 3) (get ps 1)))))
+        (twist (* (- (get ps 1) a) (cross (- (get ps 2) a) (- (get ps 3) a)))))
+    (<= (abs twist) (* 1e-12 size size size))))
+
+; The mean of a face's corners, summed in the order of their global vertex numbers so that
+; two blocks sharing the face compute exactly the same point.
+(define (/canonical-mean f points uniq)
+  (let ((ids (for ((v f)) (get uniq v)))
+        (order (/sort-indices ids)))
+    (* 0.25 (/vsum (for ((j order)) (get points (get f j)))))))
+(define (/sort-indices xs)
+  (for ((r (/upto (len xs))) (i (/upto (len xs)))
+        (k (if (== (len (for ((y xs) (z (if (< y (get xs i)) [y] []))) z)) r) [i] [])))
+    k))
+
+; ---------- curved blocks ----------
+; blockMesh places a block's points with its edge-weighted interpolation (block::createPoints).
+; On a face it depends on that face's four edges only, and with the same grading on opposite
+; edges it is the Coons patch of those edges. Every face is sampled on an n x n grid, with each
+; small quadrilateral split into four triangles about its centre; the grid's topology is the
+; same for every curved block, so /build makes it once.
+
+(define (/curved-block m g P curves)
+  (let ((n (get m 4))
+        (samples (for ((e (/upto 12))) (/edge-samples m (get curves e) (get P (get (get /hex-edges e) 0)) (get P (get (get /hex-edges e) 1)) n)))
+        (grids (for ((f (/upto 6))) (/face-grid (get /face-edges f) samples n)))
+        (corners P)
+        (edge-pts (for ((e (/upto 12)) (t (range 1 (- n 1)))) (get (get samples e) t)))
+        (face-pts (for ((f (/upto 6)) (s (range 1 (- n 1))) (t (range 1 (- n 1)))) (get (get (get grids f) s) t)))
+        (centres (for ((f (/upto 6)) (s (/upto n)) (t (/upto n)))
+                   (let ((G (get grids f)))
+                     (* 0.25 (+ (get (get G s) t) (get (get G (+ s 1)) t)
+                                (get (get G (+ s 1)) (+ t 1)) (get (get G s) (+ t 1))))))))
+    [(concat corners edge-pts face-pts centres) (get m 5)]))
+
+; n + 1 points along a block edge from pa to pb: blockMesh's curve when one is listed (the
+; record's points run from its own start, so they are reversed when the block uses it the
+; other way round), else a straight line. The ends are the vertices themselves.
+(define (/edge-samples m rec pa pb n)
+  (if (/curved? rec)
+    (let ((pts (get (get m 6) (get rec 4))))
+      (concat [pa] (for ((t (range 1 (- n 1)))) (get pts (if (get rec 5) (- n t) t))) [pb]))
+    (concat [pa] (for ((t (range 1 (- n 1)))) (* (/ 1 n) (+ (* (- n t) pa) (* t pb)))) [pb])))
+
+; Coons patch: the boundary curves blended linearly, less the bilinear blend of the corners.
+(define (/face-grid fe samples n)
+  (let ((bottom (get samples (get fe 0))) (top (get samples (get fe 1)))
+        (left (get samples (get fe 2))) (right (get samples (get fe 3)))
+        (c00 (get bottom 0)) (c10 (get bottom n)) (c01 (get top 0)) (c11 (get top n))
+        (dev-bottom (for ((s (range 0 n))) (- (get bottom s) (* (/ 1 n) (+ (* (- n s) c00) (* s c10))))))
+        (dev-top (for ((s (range 0 n))) (- (get top s) (* (/ 1 n) (+ (* (- n s) c01) (* s c11)))))))
+    (for ((s (range 0 n)))
+      (for ((t (range 0 n)))
+        (if (== t 0) (get bottom s)
+          (if (== t n) (get top s)
+            (if (== s 0) (get left t)
+              (if (== s n) (get right t)
+                ; weights from whole numbers, so that a block that sees this face the
+                ; other way round computes the same terms
+                (+ (* (/ (- n s) n) (get left t)) (* (/ s n) (get right t))
+                   (* (/ (- n t) n) (get dev-bottom s)) (* (/ t n) (get dev-top s)))))))))))
+
+; Triangles of a curved block, as indices into the points /curved-block lists: 8 corners,
+; then each edge's inner points, each face's inner points, and each small quad's centre.
+(define (/grid-topology n)
+  (let ((m (- n 1))
+        (edge-base 8)
+        (face-base (+ 8 (* 12 m)))
+        (centre-base (+ 8 (* 12 m) (* 6 m m))))
+    (/flat (for ((f (/upto 6)) (s (/upto n)) (t (/upto n)))
+      (let ((A (/grid-index f s t n)) (B (/grid-index f (+ s 1) t n))
+            (C (/grid-index f (+ s 1) (+ t 1) n)) (D (/grid-index f s (+ t 1) n))
+            (M (+ centre-base (* f n n) (* s n) t)))
+        [[M B A] [M C B] [M D C] [M A D]])))))
+
+(define (/grid-index f s t n)
+  (let ((fe (get /face-edges f)) (m (- n 1)))
+    (if (== t 0) (/edge-index (get fe 0) s n)
+      (if (== t n) (/edge-index (get fe 1) s n)
+        (if (== s 0) (/edge-index (get fe 2) t n)
+          (if (== s n) (/edge-index (get fe 3) t n)
+            (+ 8 (* 12 m) (* f m m) (* (- s 1) m) (- t 1))))))))
+
+(define (/edge-index e t n)
+  (if (== t 0) (get (get /hex-edges e) 0)
+    (if (== t n) (get (get /hex-edges e) 1)
+      (+ 8 (* e (- n 1)) (- t 1)))))
+
+; ---------- the model ----------
+
+(define (/named-block name b) [(get b 0) [name] (get b 2)])
+
+; Distinct colours for zones (and for blocks outside zones), in order of first appearance.
+(define /palette
+  [[0.306 0.475 0.655] [0.949 0.557 0.169] [0.882 0.341 0.349] [0.463 0.718 0.698]
+   [0.349 0.631 0.310] [0.929 0.788 0.282] [0.690 0.478 0.631] [1.000 0.616 0.655]
+   [0.612 0.459 0.373] [0.729 0.690 0.675]])
+
+(define (/build vertices edges blocks units)
+  (let ((f (/factor units)))
+    (if (is_string f) f
+      (if (== (len vertices) 0) "the dictionary has no vertices"
+        (if (== (len blocks) 0) "the dictionary has no blocks"
+          (let ((V vertices)
+                (mm (for ((v V)) (* f (get v 1))))
+                (records (for ((i (/upto (len edges)))) (concat ((get edges i) V) [i])))
+                (by-vertex (for ((k (/upto (len V))))
+                             (for ((r records) (x (if (or (== (get r 0) k) (== (get r 1) k)) [r] []))) x)))
+                (curved (for ((r records) (x (if (/curved? r) [r] []))) x))
+                (n (if (== (len curved) 0) 1 (max (for ((r curved)) (get r 3)))))
+                (samples (for ((r records))
+                           (if (/curved? r) (for ((t (range 0 n))) (* f ((get r 2) (/ t n)))) [])))
+                (topology (if (> n 1) (/grid-topology n) []))
+                (m [V mm records by-vertex n topology samples])
+                (labels (for ((i (/upto (len blocks))))
+                          (let ((b (get blocks i)))
+                            (if (> (len (get b 0)) 0) (get (get b 0) 0)
+                              (if (> (len (get b 1)) 0) (get (get b 1) 0) (str "block " i))))))
+                (keys (/distinct labels)))
+            (for ((i (/upto (len blocks))))
+              ((get (get blocks i) 2) m i (get labels i)
+               (get /palette (% (/index-of (get labels i) keys) (len /palette)))))))))))

@@ -1,0 +1,154 @@
+// blockmesh: OpenFOAM's blockMeshDict, the dictionary the blockMesh utility reads, rewritten
+// into GCore by rewrite.toml. The dictionary layer (key value; entries, ( ) lists, { }
+// sub-dictionaries, $macros, #directives) is generic; vertices, blocks and edges are read with
+// the structure blockMesh gives them.
+
+start: _top*
+
+_top: vertices
+    | blocks
+    | edges
+    | faces
+    | scale
+    | units
+    | ignored
+    | rejected
+    | entry
+    | statement
+    | top_code
+    | ";"
+
+top_code: "#codeStream" dict                     -> code_stream_entries
+
+// ---------- what blockMesh builds the solid from ----------
+
+// Each of vertices, blocks and edges may instead come from a macro or a #directive.
+vertices: "vertices" "(" vertex* ")" ";"
+        | "vertices" (ref | value_directive) ";" -> computed_vertices
+vertex: point                                    -> plain_vertex
+      | "name" WORD point                        -> named_vertex
+      | "project" point value                    -> projected_vertex
+      | "name" WORD "project" point value        -> projected_vertex
+      | statement
+?point: list | ref
+
+blocks: "blocks" "(" block* ")" ";"
+      | "blocks" (ref | value_directive) ";"     -> computed_blocks
+// hex (vertex labels) [zone] (cells) [simpleGrading | edgeGrading] (grading); the cell counts
+// may also be three bare numbers, the grading keyword a macro, and one macro may stand for
+// both cell counts and grading. hex is the only block shape blockMesh builds; another word
+// there is a syntax error.
+block: "hex" labels [WORD] density [_grading] -> hex
+     | "name" WORD block                         -> named_block
+     | statement
+_grading: [WORD] grading | ref grading
+?labels: list | ref
+density: list | ref | NUMBER NUMBER NUMBER
+?grading: list | ref
+
+edges: "edges" "(" edge* ")" ";"
+     | "edges" (ref | value_directive) ";"       -> computed_edges
+edge: "arc" label label point                    -> arc
+    | "arc" label label "origin" [NUMBER] point  -> arc_origin
+    | "arc" label label scalar point             -> arc_angle
+    | "polyLine" label label list                -> polyline
+    | "line" label label                         -> line
+    | "project" label label value*               -> projected_edge
+    | WORD label label value*                    -> other_edge
+    | statement
+?label: NUMBER | WORD | ref
+?scalar: NUMBER | ref | negated
+
+faces: "faces" "(" ")" ";"                       -> no_faces
+     | "faces" "(" ("project" | value)+ ")" ";"  -> curved_faces
+     | "faces" (ref | value_directive) ";"       -> curved_faces
+
+scale: "scale" value ";"                         -> scale
+     | "convertToMeters" value ";"               -> convert_to_meters
+units: "units" "[" WORD "]" ";"
+     | "units" value+ ";"                        -> other_units
+
+// Read and parsed, but they do not change the solid: see rewrite.toml.
+ignored: "FoamFile" dict
+       | "boundary" value ";"
+       | "patches" value ";"
+       | "defaultPatch" dict
+       | "mergePatchPairs" value ";"
+       | "geometry" dict
+
+rejected: "transform" dict                       -> transform
+
+// ---------- the generic dictionary layer ----------
+
+entry: WORD values ";"                           -> define
+     | WORD dict                                 -> define_dict
+values: value*
+
+// A sub-dictionary's body nests, so that each entry is in scope for the ones after it.
+dict: "{" dict_body "}"
+?dict_body:                                      -> dict_end
+          | WORD values ";" dict_body            -> pair
+          | WORD dict dict_body                  -> pair_dict
+          | statement dict_body                  -> dict_statement
+          | ref dict_body                        -> dict_merge
+
+?value: NUMBER
+      | STRING
+      | WORD
+      | list
+      | ref
+      | negated
+      | dimensions
+      | value_directive
+      | VERBATIM
+list: "(" _list_item* ")"
+_list_item: value | dict | statement
+dimensions: "[" value* "]"
+
+// $name, $dict/key, $!top/key and $/top/key (paths from the top level), -$name and #neg $name
+ref: "$" path                                    -> macro
+   | ("$!" | "$/") path                          -> root_macro
+   | "$:" WORD                                   -> other_macro
+   | FILE_MACRO                                  -> other_macro
+   | INLINE_EVAL                                 -> inline_eval
+path: WORD                                       -> path_root
+    | path "/" WORD                              -> path_step
+negated: "-$" path                               -> neg_macro
+       | "#neg" value                            -> neg_directive
+
+// #directives that take the place of a value
+?value_directive: "#calc" value                  -> calc
+                | "#eval" value                  -> eval
+                | EVAL_BRACE                     -> eval
+                | "#codeStream" dict             -> code_stream
+
+// #directives that stand on their own
+?statement: "#include" value                     -> include
+          | "#includeEtc" value                  -> include
+          | "#includeIfPresent" value            -> include
+          | "#includeFunc" value                 -> include
+          | "#remove" value                      -> remove
+          | "#inputMode" WORD                    -> input_mode
+          | "#message" value                     -> message
+          | "#ifeq" list                         -> conditional
+          | "#ifeq" (NUMBER | STRING | WORD | ref) value -> conditional
+          | "#if" value                          -> conditional
+          | "#elif" value                        -> conditional
+          | "#else"                              -> conditional
+          | "#endif"                             -> conditional
+          | DIRECTIVE                            -> other_directive
+
+NUMBER: /[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/
+WORD: /[A-Za-z_][^\s"';{}()\[\]\/\\$#]*/
+STRING: /"(\\.|[^"\\])*"/
+VERBATIM: /#\{(.|\n)*?#\}/
+EVAL_BRACE: /#eval\s*\{[^}]*\}/
+INLINE_EVAL: /\$\{(.|\n)*?\}+/
+FILE_MACRO: /\$\.\.?\/[^\s;()]*/
+DIRECTIVE.-1: /#[A-Za-z]\w*/
+
+LINE_COMMENT: /\/\/[^\n]*/
+BLOCK_COMMENT: /\/\*(.|\n)*?\*\//
+%ignore LINE_COMMENT
+%ignore BLOCK_COMMENT
+%ignore /\s+/

@@ -1,0 +1,9 @@
+id = "blockmesh"
+name = "OpenFOAM blockMeshDict"
+version = "0.1.0"
+description = "OpenFOAM's blockMesh dictionary, read as data: the solid its hex blocks occupy, one coloured, named part per zone, with arc, polyLine and line edges. OpenFOAM lengths are metres times scale (or convertToMeters, or units); the model is written in millimetres, so exports are 1:1 physical. Cell counts, grading and patches only shape the mesh and are ignored; projections, splines, #calc, #eval, #codeStream and #include are reported as errors."
+# A case keeps its dictionary in system/blockMeshDict. Examples and copies use name.blockMeshDict.
+extensions = [".blockmeshdict"]
+filenames = ["blockMeshDict"]
+comment = "//"
+parser = "lalr"
