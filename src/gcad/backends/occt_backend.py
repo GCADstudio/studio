@@ -144,8 +144,11 @@ class OcctModel:
         root_id: str,
         color: RGBA | None,
         name: str | None,
+        face_names: dict[int, str] | None = None,
     ) -> None:
         self.shape = shape
+        #: the source entity of each face, by `_face_key`: triangles are grouped per face
+        self.face_names = face_names
         self.dim = dim
         self.tolerance = tolerance
         self.root_id = root_id
@@ -169,7 +172,15 @@ class OcctModel:
         BRepMesh_IncrementalMesh(self.shape, self.tolerance, False, 0.5, False)
         points: list[tuple[float, float, float]] = []
         triangles: list[tuple[int, int, int]] = []
+        groups = [group]
+        tri_groups: list[int] = []
         for face_shape in _shapes(self.shape, TopAbs_FACE):
+            g = 0
+            if self.face_names is not None:
+                entity = self.face_names.get(_face_key(face_shape))
+                if entity is not None:
+                    groups.append(MeshGroup(self.root_id, self.color, entity))
+                    g = len(groups) - 1
             face = _cast("Face", face_shape)
             loc = TopLoc_Location()
             tri = BRep_Tool.Triangulation_s(face, loc)
@@ -186,6 +197,7 @@ class OcctModel:
                 if reverse:
                     b, c = c, b
                 triangles.append((base + a - 1, base + b - 1, base + c - 1))
+                tri_groups.append(g)
         # Faces carry their own copies of shared edge nodes: weld them.
         raw = np.asarray(points, dtype=np.float64).reshape(-1, 3)
         key = np.round(raw / max(self.tolerance * 1e-4, 1e-9)).astype(np.int64)
@@ -197,7 +209,14 @@ class OcctModel:
         tris = rank[inverse.ravel()][np.asarray(triangles, dtype=np.int64).reshape(-1, 3)]
         keep = (tris[:, 0] != tris[:, 1]) & (tris[:, 1] != tris[:, 2]) & (tris[:, 0] != tris[:, 2])
         tris = tris[keep]
-        return Mesh(vertices, tris, [group], np.zeros(len(tris), np.int64))
+        tri_group = np.asarray(tri_groups, dtype=np.int64).reshape(-1)[keep]
+        used = sorted(set(tri_group.tolist()))
+        if used != list(range(len(groups))):  # drop groups left without triangles
+            remap = np.zeros(len(groups), dtype=np.int64)
+            remap[used] = np.arange(len(used))
+            groups = [groups[i] for i in used]
+            tri_group = remap[tri_group]
+        return Mesh(vertices, tris, groups, tri_group)
 
     def contours(self) -> list[np.ndarray]:
         raise GcadError("2D formats are written from the manifold back-end; use --backend auto")
@@ -229,6 +248,46 @@ class OcctModel:
 
 
 _STEP_CACHE: dict[tuple[str, int], TopoDS_Shape] = {}
+#: the `#n` of each face OpenCASCADE made from a STEP file, by `_face_key`, per file and entity
+_STEP_FACES: dict[tuple[str, int], dict[int, str]] = {}
+
+
+def _face_key(face: TopoDS_Shape) -> int:
+    """The same for every reference to one face: OCCT hashes its TShape and location."""
+    return hash(face)
+
+
+def instance_names(text: bytes) -> list[str]:
+    """The instance names (`#n`) of a Part 21 file in the order they are written, which is
+    the order OpenCASCADE numbers its entities in. Strings and comments are skipped."""
+    import re
+
+    names: list[str] = []
+    # A statement starts the file, or follows a ';'. Strings may hold ';' and '#'.
+    token = re.compile(rb"'(?:[^']|'')*'|/\*.*?\*/|;\s*#(\d+)\s*=", re.S)
+    for m in token.finditer(text):
+        if m.group(1) is not None:
+            names.append("#" + m.group(1).decode("ascii"))
+    return names
+
+
+def _face_names(reader: Any, shape: TopoDS_Shape, data: bytes) -> dict[int, str]:
+    """Which file instance each face of the transferred shape came from."""
+    model = reader.StepModel()
+    transfer = reader.WS().TransferReader()
+    names = instance_names(data)
+    if len(names) != model.NbEntities():  # the file is not as this reader understands it
+        return {}
+    index = {model.Value(i).This(): i for i in range(1, model.NbEntities() + 1)}
+    out: dict[int, str] = {}
+    for face in _shapes(shape, TopAbs_FACE):
+        entity = transfer.EntityFromShapeResult(face, -1)
+        if entity is None:
+            continue
+        i = index.get(entity.This())
+        if i is not None:
+            out[_face_key(face)] = names[i - 1]
+    return out
 
 
 def read_step(data: bytes, entity: int, digest: str, span: Span | None = None) -> TopoDS_Shape:
@@ -256,12 +315,19 @@ def read_step(data: bytes, entity: int, digest: str, span: Span | None = None) -
             )
         reader.TransferRoots()
         shape = reader.OneShape()
+        if shape is not None and not shape.IsNull():
+            _STEP_FACES[key] = _face_names(reader, shape, data)
     finally:
         os.unlink(path)
     if shape is None or shape.IsNull() or not _shapes(shape, TopAbs_FACE):
         raise GcadError(f"OpenCASCADE found no faces in #{entity}", span)
     _STEP_CACHE[key] = shape
     return shape
+
+
+def step_face_names(digest: str, entity: int) -> dict[int, str]:
+    """The `#n` of each face of a shape `read_step` returned, by `_face_key`."""
+    return _STEP_FACES.get((digest, entity), {})
 
 
 class _Builder:

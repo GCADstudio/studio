@@ -10,7 +10,7 @@
 
 ;; ---- lists and records ---------------------------------------------------------------------
 
-(define (filter xs keep) (apply concat (for ((x xs)) (if (keep x) [x] []))))
+; (filter xs keep) is GCore's own
 (define (first xs) (get xs 0))
 (define (last xs) (get xs (- (len xs) 1)))
 (define (any xs keep) (> (len (filter xs keep)) 0))
@@ -24,7 +24,9 @@
 (define (part r name) (first (filter (partials r) (fn (p) (== (kw p) name)))))
 (define (kinds r) (if (complex? r) (for ((p (partials r))) (kw p)) [(kw r)]))
 (define (is r name) (and (is_record r) (or (== (kw r) name) (and (complex? r) (contains (kinds r) name)))))
-(define (is-any r names) (and (is_record r) (any (kinds r) (fn (k) (contains names k)))))
+(define (is-any r names)
+  (and (is_record r)
+       (if (complex? r) (any (kinds r) (fn (k) (contains names k))) (contains names (kw r)))))
 ; a typed parameter's value: LENGTH_MEASURE(5.) -> 5
 (define (val x)
   (if (and (is_record x) (== (rid x) "") (== (len x) 3) (!= (kw x) "*")) (get x 2) x))
@@ -881,6 +883,361 @@
       (let ((c (find-colour (attr s 1))))
         (if (is_list c) [[(rid (attr s 2)) c]] [])))))
 
+;; ---- PMI: presentation, semantics and saved views (AP242) ----------------------------------
+; What a file says about its shape, beside the shape: each callout, tolerance, datum, dimension
+; and saved view is one `annotate` (SPEC FR-C11, FR-I9), so the graph and its hash are as without
+; PMI. Graphical PMI (tessellated curves and triangles, polylines, circles) is drawn by the studio
+; in model coordinates; semantic PMI is listed with the faces it applies to (its targets) and
+; linked to the callouts that present it. docs/design/iso10303-kernel.md §5.1.
+
+(define TOLERANCE_TYPES
+  ["ANGULARITY_TOLERANCE" "angularity" "∠" "CIRCULAR_RUNOUT_TOLERANCE" "circular runout" "↗"
+   "COAXIALITY_TOLERANCE" "coaxiality" "◎" "CONCENTRICITY_TOLERANCE" "concentricity" "◎"
+   "CYLINDRICITY_TOLERANCE" "cylindricity" "⌭" "FLATNESS_TOLERANCE" "flatness" "⏥"
+   "LINE_PROFILE_TOLERANCE" "line profile" "⌒" "PARALLELISM_TOLERANCE" "parallelism" "∥"
+   "PERPENDICULARITY_TOLERANCE" "perpendicularity" "⟂" "POSITION_TOLERANCE" "position" "⌖"
+   "ROUNDNESS_TOLERANCE" "roundness" "○" "STRAIGHTNESS_TOLERANCE" "straightness" "⏤"
+   "SURFACE_PROFILE_TOLERANCE" "surface profile" "⌓" "SYMMETRY_TOLERANCE" "symmetry" "⌯"
+   "TOTAL_RUNOUT_TOLERANCE" "total runout" "⌰"])
+(define TOLERANCES (concat ["GEOMETRIC_TOLERANCE"]
+                           (for ((i (range 0 (- (len TOLERANCE_TYPES) 1) 3))) (get TOLERANCE_TYPES i))))
+(define SIZES ["DIMENSIONAL_SIZE" "ANGULAR_SIZE" "DIMENSIONAL_SIZE_WITH_PATH"
+               "DIMENSIONAL_SIZE_WITH_DATUM_FEATURE"])
+(define LOCATIONS ["DIMENSIONAL_LOCATION" "ANGULAR_LOCATION" "DIMENSIONAL_LOCATION_WITH_PATH"
+                   "DIRECTED_DIMENSIONAL_LOCATION" "DIMENSIONAL_LOCATION_WITH_DATUM_FEATURE"])
+(define OCCURRENCES ["ANNOTATION_CURVE_OCCURRENCE" "TESSELLATED_ANNOTATION_OCCURRENCE"
+                     "ANNOTATION_OCCURRENCE" "ANNOTATION_PLACEHOLDER_OCCURRENCE"
+                     "ANNOTATION_FILL_AREA_OCCURRENCE"])
+(define DMIAS ["DRAUGHTING_MODEL_ITEM_ASSOCIATION" "DRAUGHTING_MODEL_ITEM_ASSOCIATION_WITH_PLACEHOLDER"])
+(define CAMERAS ["CAMERA_MODEL_D3" "CAMERA_MODEL_D3_MULTI_CLIPPING" "CAMERA_MODEL_D3_WITH_HLHSR"])
+(define PMI_RELEVANT
+  (concat TOLERANCES SIZES LOCATIONS OCCURRENCES DMIAS
+          ["DRAUGHTING_CALLOUT" "DRAUGHTING_MODEL" "DATUM" "DATUM_FEATURE" "DATUM_SYSTEM" "DATUM_TARGET"
+           "PLACED_DATUM_TARGET_FEATURE" "GEOMETRIC_ITEM_SPECIFIC_USAGE" "ITEM_IDENTIFIED_REPRESENTATION_USAGE"
+           "SHAPE_ASPECT_RELATIONSHIP"
+           "DIMENSIONAL_CHARACTERISTIC_REPRESENTATION" "PLUS_MINUS_TOLERANCE" "TOLERANCE_ZONE"]))
+
+; run f for each x, for what it reports; a body of several expressions must not leave values
+(define (each xs f) (let ((done (for ((x xs)) (f x)))) undef))
+(define (of-kinds records names) (filter records (fn (r) (is-any r names))))
+; a reference's name, or "" for an unset attribute, so comparisons need no guard
+(define (ref x) (if (is_record x) (rid x) ""))
+; a list that is not a record (records are lists too)
+(define (plain-list? x) (and (is_list x) (not (is_record x))))
+(define (rids xs) (for ((x xs)) (ref x)))
+(define (has-rid xs r) (any xs (fn (x) (== (ref x) (ref r)))))
+(define (join xs sep)
+  (if (== (len xs) 0) ""
+    (apply str (concat [(first xs)] (for ((i (range 1 (- (len xs) 1)))) (str sep (get xs i)))))))
+; a number to six decimals at most, as text; by digits, since GCore's division is by a reciprocal
+; and 0.2 would print as 0.19999999999999998
+(define (num-text x)
+  (let ((n (round (* (abs x) 1000000)))
+        (digits (str n))
+        (padded (str (apply str (for ((i (range (len digits) 6))) "0")) digits))
+        (k (- (len padded) 6))
+        (whole (apply str (for ((i (range 0 (- k 1)))) (get padded i))))
+        (frac (for ((i (range k (- (len padded) 1)))) (get padded i)))
+        (last-digit (last (concat [-1] (filter (range 0 5) (fn (i) (!= (get frac i) "0")))))))
+    (str (if (and (< x 0) (> n 0)) "-" "") whole
+         (if (< last-digit 0) "" (str "." (apply str (for ((i (range 0 last-digit))) (get frac i))))))))
+(define (named r) (let ((n (field r 0 "REPRESENTATION_ITEM" 0))) (if (is_string n) n "")))
+; a representation's name, items and context, simple or complex (DRAUGHTING_MODEL is often
+; complex, with CHARACTERIZED_OBJECT before REPRESENTATION)
+(define (rep-name rep) (let ((n (field rep 0 "REPRESENTATION" 0))) (if (is_string n) n "")))
+(define (rep-items rep) (let ((xs (field rep 1 "REPRESENTATION" 1))) (if (plain-list? xs) xs [])))
+(define (rep-units rep)
+  (let ((c (field rep 2 "REPRESENTATION" 2))) (if (is_record c) (context-units c) [1 1])))
+
+;; units and measures, as written (a drawing's tolerance reads in its own units)
+
+(define SI_NAMES ["METRE" "m" "RADIAN" "rad" "STERADIAN" "sr" "SQUARE_METRE" "m²" "CUBIC_METRE" "m³"])
+(define SI_PREFIXES ["MILLI" "m" "CENTI" "c" "MICRO" "µ" "KILO" "k" "DECI" "d" "NANO" "n"])
+(define (lookup table key (default undef) (i 0))
+  (if (>= i (len table)) default
+    (if (== (get table i) key) (get table (+ i 1)) (lookup table key default (+ i 2)))))
+(define (unit-text u)
+  (if (is u "SI_UNIT")
+    (let ((si (part u "SI_UNIT")))
+      (str (if (is_undef (attr si 0)) "" (lookup SI_PREFIXES (enum (attr si 0)) ""))
+           (lookup SI_NAMES (enum (attr si 1)) (lower (enum (attr si 1))))))
+    (if (is u "CONVERSION_BASED_UNIT")
+      (let ((n (lower (attr (part u "CONVERSION_BASED_UNIT") 0))))
+        (lookup ["inch" "in" "degree" "°" "foot" "ft"] n n))
+      "")))
+; [value unit] of a measure with unit, simple or complex
+(define (measure m)
+  (if (not (is_record m)) [undef ""]
+    [(val (field m 0 "MEASURE_WITH_UNIT" 0)) (unit-text (field m 1 "MEASURE_WITH_UNIT" 1))]))
+(define (measure-text m)
+  (let ((v (measure m)))
+    (if (is_num (first v)) (str (num-text (first v)) (if (== (get v 1) "°") "°" (str " " (get v 1)))) "?")))
+
+;; which faces a shape aspect stands for
+
+; `links` holds, made once per file, how shape aspects reach faces (GEOMETRIC_ITEM_SPECIFIC_USAGE
+; and its supertype: aspect -> faces) and composite aspects their members (a plain
+; SHAPE_ASPECT_RELATIONSHIP, relating -> related), as parallel lists looked up by `positions`:
+; [usage aspects, usage faces, relating names, related, related names, relating, relationships]
+(define (aspect-links p)
+  (let ((usages (of-kinds p ["GEOMETRIC_ITEM_SPECIFIC_USAGE" "ITEM_IDENTIFIED_REPRESENTATION_USAGE"]))
+        (sar (filter p (fn (r) (== (kw r) "SHAPE_ASPECT_RELATIONSHIP")))))
+    [(for ((g usages)) (ref (attr g 2)))
+     (for ((g usages)) (let ((it (val (attr g 4)))) (filter (if (plain-list? it) it [it]) is_record)))
+     (for ((s sar)) (ref (attr s 2)))
+     (for ((s sar)) (attr s 3))
+     (for ((s sar)) (ref (attr s 3)))
+     (for ((s sar)) (attr s 2))
+     sar]))
+(define (aspect-faces a links (depth 0))
+  (if (or (> depth 8) (not (is_record a))) []
+    (concat
+      (apply concat (for ((i (positions (get links 0) (rid a)))) (get (get links 1) i)))
+      (apply concat (for ((i (positions (get links 2) (rid a))))
+                      (aspect-faces (get (get links 3) i) links (+ depth 1)))))))
+; a datum's faces are its features': the relationship relates the feature to the datum
+(define (datum-faces d links)
+  (apply concat (for ((i (positions (get links 4) (rid d))))
+                  (let ((f (get (get links 5) i))) (if (is f "DATUM") [] (aspect-faces f links))))))
+(define (faces-of a links)
+  (unique-items (if (is a "DATUM") (datum-faces a links)
+                  (if (is-any a LOCATIONS)
+                    (concat (aspect-faces (attr a 2) links) (aspect-faces (attr a 3) links))
+                    (if (is-any a SIZES) (aspect-faces (attr a 0) links) (aspect-faces a links))))))
+
+;; graphical PMI: geometry of annotation occurrences, as [polylines triangle-points]
+
+; Points of a COORDINATES_LIST in model coordinates. Thousands per file: the placement is split
+; once into rows and a translation, and the identity and unit scale cost nothing.
+(define (coordinates c m ctx)
+  (let ((k (lf ctx)) (pts (attr c 2)))
+    (if (== m IDENTITY)
+      (if (== k 1) (for ((p pts)) (pad3 p)) (for ((p pts)) (pad3 (* k p))))
+      (let ((rows (for ((i (range 0 2))) (let ((r (get m i))) [(get r 0) (get r 1) (get r 2)])))
+            (shift (column m 3)))
+        (for ((p pts)) (let ((q (pad3 (* k p)))) (+ (for ((r rows)) (* r q)) shift)))))))
+(define (strip-triangles s)
+  (apply concat (for ((j (range 0 (- (len s) 3))))
+                  (let ((a (get s j)) (b (get s (+ j 1))) (c (get s (+ j 2))))
+                    (if (or (== a b) (== b c) (== a c)) [] [[a b c]])))))
+(define (fan-triangles s)
+  (for ((j (range 1 (- (len s) 2)))) [(get s 0) (get s j) (get s (+ j 1))]))
+(define (tess-triangles x tris m ctx)
+  (let ((pts (coordinates (attr x 1) m ctx)) (pn (attr x 4)))
+    [[] (apply concat (if (> (len pn) 0)
+                        (for ((t tris)) (for ((i t)) (get pts (- (get pn (- i 1)) 1))))
+                        (for ((t tris)) (for ((i t)) (get pts (- i 1))))))]))
+(define CIRCLE_STEPS 48)
+(define (circle-points c m ctx)
+  (let ((mc (mat-mul m (placement (attr c 1) ctx))) (r (* (lf ctx) (val (attr c 2)))))
+    (for ((k (range 0 CIRCLE_STEPS)))
+      (let ((cs (cos-sin (* k (/ 360 CIRCLE_STEPS))))) (mat-vec mc [(* r (get cs 0)) (* r (get cs 1)) 0])))))
+(define (merge-graphics parts)
+  [(apply concat (for ((p parts)) (get p 0))) (apply concat (for ((p parts)) (get p 1)))])
+(define (graphics x m ctx (depth 0))
+  (if (or (> depth 12) (not (is_record x))) [[] []]
+    (if (is x "REPOSITIONED_TESSELLATED_ITEM")
+      (let ((m2 (mat-mul m (placement (attr (part x "REPOSITIONED_TESSELLATED_ITEM") 0) ctx))))
+        (merge-graphics (for ((c (field x 1 "TESSELLATED_GEOMETRIC_SET" 0))) (graphics c m2 ctx (+ depth 1)))))
+      (if (is-any x ["TESSELLATED_GEOMETRIC_SET" "GEOMETRIC_SET" "GEOMETRIC_CURVE_SET"])
+        (merge-graphics (for ((c (attr x 1))) (graphics c m ctx (+ depth 1))))
+        (if (is x "TESSELLATED_CURVE_SET")
+          (let ((pts (coordinates (attr x 1) m ctx)))
+            [(for ((s (attr x 2))) (for ((i s)) (get pts (- i 1)))) []])
+          (if (is x "COMPLEX_TRIANGULATED_SURFACE_SET")
+            (tess-triangles x (concat (apply concat (for ((s (attr x 5))) (strip-triangles s)))
+                                      (apply concat (for ((s (attr x 6))) (fan-triangles s)))) m ctx)
+            (if (is x "TRIANGULATED_SURFACE_SET")
+              (tess-triangles x (attr x 5) m ctx)
+              (if (is x "POLYLINE")
+                [[(for ((p (attr x 1))) (mat-vec m (point p ctx)))] []]
+                (if (is x "CIRCLE")
+                  [[(circle-points x m ctx)] []]
+                  (if (is x "COMPOSITE_CURVE")
+                    (merge-graphics (for ((s (attr x 1))) (graphics (attr s 2) m ctx (+ depth 1))))
+                    [[] []]))))))))))
+(define (occurrence-graphics o ctx) (graphics (attr o 2) IDENTITY ctx))
+
+;; semantic PMI: what is listed
+
+(define (tolerance-type r)
+  (let ((k (first (filter (kinds r) (fn (k) (and (contains TOLERANCES k) (!= k "GEOMETRIC_TOLERANCE"))))))
+        (i (if (is_undef k) -1 (position TOLERANCE_TYPES k))))
+    (if (< i 0) ["geometric tolerance" ""] [(get TOLERANCE_TYPES (+ i 1)) (get TOLERANCE_TYPES (+ i 2))])))
+(define (datum-letters base)
+  (let ((b (val base)))
+    (if (plain-list? b) (join (for ((e b)) (datum-letters (attr e 4))) "-")
+      (if (is b "DATUM") (attr b 4)
+        (if (is b "DATUM_REFERENCE_ELEMENT") (datum-letters (attr b 4)) "?")))))
+(define (compartment-text c)
+  (if (is c "DATUM_REFERENCE") (datum-letters (attr c 1))
+    (let ((mods (attr c 5)))
+      (str (datum-letters (attr c 4))
+           (if (and (plain-list? mods) (> (len mods) 0))
+             (str " (" (join (for ((x mods)) (lower (if (is_record x) (kw x) (enum x)))) " ") ")") "")))))
+(define (datum-system-text s)
+  (if (is s "DATUM_SYSTEM") (join (for ((c (attr s 4))) (compartment-text c)) " | ") (compartment-text s)))
+; the datum system: a complex instance's GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE partial, or the
+; fifth attribute of a simple subtype of it (PERPENDICULARITY_TOLERANCE(name,'',value,aspect,(#ds)))
+(define (tolerance-datums r)
+  (let ((ds (if (complex? r)
+              (let ((p (part r "GEOMETRIC_TOLERANCE_WITH_DATUM_REFERENCE"))) (if (is_undef p) undef (attr p 0)))
+              (attr r 4))))
+    (if (plain-list? ds) ds [])))
+(define (tolerance-modifiers r)
+  (if (is r "GEOMETRIC_TOLERANCE_WITH_MODIFIERS")
+    (for ((x (field r 4 "GEOMETRIC_TOLERANCE_WITH_MODIFIERS" 0))) (lower (enum x))) []))
+(define (diametral? r zones)
+  (any zones (fn (z) (and (any (attr z 4) (fn (t) (== (ref t) (ref r))))
+                          (is_record (attr z 5)) (is_string (attr (attr z 5) 0))
+                          (starts_with (lower (attr (attr z 5) 0)) "cylindrical")))))
+
+; [name text] for each value of a dimension: its measures (nominal value, upper and lower
+; limit) and notes (theoretical, statistical), the notes also inside compound items
+(define (value-pairs i)
+  (if (is i "MEASURE_WITH_UNIT")
+    [[(let ((n (named i))) (if (== n "") "nominal value" n)) (measure-text i)]]
+    (if (is i "DESCRIPTIVE_REPRESENTATION_ITEM") [[(attr i 0) (attr i 1)]]
+      (if (is i "COMPOUND_REPRESENTATION_ITEM")
+        (let ((xs (val (attr i 1)))) (apply concat (for ((x (if (plain-list? xs) xs []))) (value-pairs x))))
+        []))))
+(define (dimension-values d dcrs)
+  (apply concat (for ((c dcrs))
+                  (if (== (ref (attr c 0)) (ref d))
+                    (apply concat (for ((i (rep-items (attr c 1)))) (value-pairs i)))
+                    []))))
+(define (value-of values name) (let ((v (first (filter values (fn (v) (== (first v) name)))))) (if (is_undef v) undef (get v 1))))
+(define (noted values note) (any values (fn (v) (and (== (first v) "dimensional note") (== (get v 1) note)))))
+; a plus-minus tolerance as written on a drawing: ± when symmetric, else upper / lower
+(define (dimension-tolerance d pmts)
+  (let ((t (first (filter pmts (fn (p) (== (ref (attr p 1)) (ref d)))))))
+    (if (is_undef t) undef
+      (let ((rng (attr t 0)))
+        (if (is rng "TOLERANCE_VALUE")
+          (let ((lo (measure (attr rng 0))) (hi (measure (attr rng 1))))
+            (if (and (is_num (first lo)) (is_num (first hi)) (== (first hi) (- (first lo))))
+              (str "± " (measure-text (attr rng 1)))
+              (str "+" (measure-text (attr rng 1)) " / " (measure-text (attr rng 0)))))
+          (if (is rng "LIMITS_AND_FITS")
+            (str (attr rng 0) (attr rng 2) (if (is_string (attr rng 1)) (attr rng 1) ""))
+            (kw rng)))))))
+(define (dimension-label name values tol)
+  (let ((nominal (value-of values "nominal value"))
+        (lo (value-of values "lower limit"))
+        (hi (value-of values "upper limit"))
+        (body (if (and (is_string lo) (is_string hi)) (str lo "-" hi)
+                (if (is_undef nominal) name nominal)))
+        (valued (or (is_string nominal) (is_string lo)))
+        (sym (if valued (dimension-symbol name) "")))
+    (str sym
+         (if (noted values "theoretical") (str "[" body "]") body)
+         (if (is_undef tol) "" (str " " tol))
+         (if (noted values "statistical") " <ST>" ""))))
+(define (dimension-symbol name)
+  (lookup ["diameter" "⌀" "radius" "R" "spherical diameter" "S⌀" "spherical radius" "SR"
+           "thickness" "" "curved distance" "⌒"] name ""))
+
+;; the annotations
+
+(define (pmi all)
+  (let ((p (filter all (fn (r) (is-any r PMI_RELEVANT))))
+        (links (aspect-links p))
+        (dms (of-kinds p ["DRAUGHTING_MODEL"]))
+        (dm-ctx (if (> (len dms) 0) (let ((u (rep-units (first dms)))) [(first u) (get u 1) [] []]) [1 1 [] []]))
+        (callouts (of-kinds p ["DRAUGHTING_CALLOUT"]))
+        ; which callout an occurrence belongs to: [occurrence names, callout names], made once
+        (owned (let ((pairs (apply concat (for ((c callouts)) (for ((o (attr c 1))) [(ref o) (ref c)])))))
+                 [(for ((q pairs)) (get q 0)) (for ((q pairs)) (get q 1))]))
+        (owner (fn (x) (let ((i (position (get owned 0) (ref x)))) (if (< i 0) (ref x) (get (get owned 1) i)))))
+        (loose (filter (of-kinds p OCCURRENCES) (fn (o) (< (position (get owned 0) (ref o)) 0))))
+        (shown (concat callouts loose))
+        (views (filter dms (fn (dm) (any (rep-items dm) (fn (i) (is-any i CAMERAS))))))
+        (view-members (for ((dm views))
+                        (apply concat (for ((i (rep-items dm)))
+                                        (if (is i "ANNOTATION_PLANE") (for ((e (attr i 3))) (owner e))
+                                          (if (is-any i (concat ["DRAUGHTING_CALLOUT"] OCCURRENCES)) [(owner i)] []))))))
+        ; semantic item <-> the callout presenting it: [[callout item] ...], made once
+        (dmia (for ((a (of-kinds p DMIAS))) [(owner (attr a 4)) (ref (attr a 2))]))
+        (presented (fn (s) (apply concat (for ((a dmia)) (if (== (get a 1) (ref s)) [(get a 0)] [])))))
+        (presents (fn (c) (apply concat (for ((a dmia)) (if (== (get a 0) (ref c)) [(get a 1)] [])))))
+        (zones (of-kinds p ["TOLERANCE_ZONE"]))
+        (dcrs (of-kinds p ["DIMENSIONAL_CHARACTERISTIC_REPRESENTATION"]))
+        (pmts (of-kinds p ["PLUS_MINUS_TOLERANCE"])))
+    ; one binding runs every report in order, so the value of `pmi` is only the count
+    (let ((reports [
+    ; saved views: a draughting model with a camera
+    (each (range 0 (- (len views) 1)) (fn (k)
+      (let ((dm (get views k))
+            (cam (first (filter (rep-items dm) (fn (i) (is-any i CAMERAS)))))
+            (f (placement (attr cam 1) dm-ctx)))
+        (at dm (annotate (ref dm) (let ((n (rep-name dm))) (if (== n "") (attr cam 0) n)) :kind "view"
+                         :camera [(column f 3) (* -1 (column f 2)) (column f 1)]
+                         :links (get view-members k))))))
+    ; graphical PMI: each callout (or occurrence outside any) with its lines and triangles
+    (each shown (fn (c)
+      (let ((occ (if (is c "DRAUGHTING_CALLOUT") (filter (attr c 1) is_record) [c]))
+            (g (merge-graphics (for ((o occ)) (occurrence-graphics o dm-ctx))))
+            (colour (first-list (for ((o occ)) (find-colour (attr o 1))))))
+        (at c (annotate (ref c) (if (is_string (attr c 0)) (attr c 0) (kw c)) :kind "callout"
+                        :lines (get g 0) :triangles (get g 1) :color colour
+                        :views (apply concat (for ((k (range 0 (- (len views) 1))))
+                                               (if (contains (get view-members k) (ref c)) [(ref (get views k))] [])))
+                        :links (presents c))))))
+    ; semantic PMI
+    (each (of-kinds p TOLERANCES) (fn (r)
+      (let ((type (tolerance-type r))
+            (magnitude (field r 2 "GEOMETRIC_TOLERANCE" 2))
+            (aspect (field r 3 "GEOMETRIC_TOLERANCE" 3))
+            (datums (tolerance-datums r))
+            (mods (tolerance-modifiers r))
+            (dia (diametral? r zones))
+            (frame (str (if (is aspect "ALL_AROUND_SHAPE_ASPECT") "⌮ " "") (get type 1) " " (if dia "⌀" "") (measure-text magnitude)
+                        (apply str (for ((d datums)) (str " | " (datum-system-text d)))))))
+        (at r (annotate (ref r) frame :kind "tolerance"
+                        :targets (faces-of aspect links)
+                        :links (concat (presented r) (rids datums))
+                        :details (concat [["type" (get type 0)] ["name" (field r 0 "GEOMETRIC_TOLERANCE" 0)]
+                                          ["tolerance" (str (if dia "⌀" "") (measure-text magnitude))]]
+                                         (if (> (len datums) 0) [["datums" (join (for ((d datums)) (datum-system-text d)) " ; ")]] [])
+                                         (if (> (len mods) 0) [["modifiers" (join mods ", ")]] [])
+                                         [["applies to" (where aspect)]]))))))
+    (each (of-kinds p (concat SIZES LOCATIONS)) (fn (d)
+      (let ((size (is-any d SIZES))
+            (name (if size (attr d 1) (attr d 0)))
+            (values (dimension-values d dcrs))
+            (tol (dimension-tolerance d pmts))
+            (label (dimension-label name values tol)))
+        (at d (annotate (ref d) label :kind "dimension"
+                        :targets (faces-of d links)
+                        :links (presented d)
+                        :details (concat [["type" (if size (str "size: " name) (str "location: " name))]]
+                                         values
+                                         (if (is_undef tol) [] [["tolerance" tol]])))))))
+    (each (of-kinds p ["DATUM"]) (fn (d)
+      (at d (annotate (ref d) (str "Datum " (attr d 4)) :kind "datum" :targets (faces-of d links)
+                      :links (presented d) :details [["identification" (attr d 4)]]))))
+    (each (filter (of-kinds p ["DATUM_FEATURE" "DATUM_TARGET" "PLACED_DATUM_TARGET_FEATURE"])
+                  (fn (d) (not (is d "DATUM")))) (fn (d)
+      (let ((datum (first (filter (get links 6) (fn (s) (and (== (ref (attr s 2)) (ref d)) (is (attr s 3) "DATUM"))))))
+            (letter (if (is_undef datum) "" (attr (attr datum 3) 4)))
+            (kind (if (is d "DATUM_FEATURE") "datum feature" "datum target")))
+        (at d (annotate (ref d) (str (if (== kind "datum feature") "Datum feature " "Datum target ")
+                                     (if (== kind "datum feature") letter (str letter (attr d 4))))
+                        :kind kind :targets (faces-of d links)
+                        :links (concat (presented d) (if (is_undef datum) [] [(ref (attr datum 3))]))
+                        :details [["name" (if (is_string (attr d 0)) (attr d 0) "")]])))))
+    (each (of-kinds p ["DATUM_SYSTEM"]) (fn (s)
+      (at s (annotate (ref s) (str "Datum system " (datum-system-text s)) :kind "datum system"
+                      :links (apply concat (for ((c (attr s 4))) (let ((b (val (attr c 4)))) (if (is b "DATUM") [(ref b)] []))))))))
+    ])
+          (n (+ (len shown) (len (of-kinds p (concat TOLERANCES SIZES LOCATIONS ["DATUM"])))))
+          (said (if (> n 0)
+                  (info "PMI: " (len shown) " annotation(s) drawn, " (len views) " saved view(s), "
+                        (len (of-kinds p TOLERANCES)) " geometric tolerance(s), "
+                        (len (of-kinds p (concat SIZES LOCATIONS))) " dimension(s), "
+                        (len (of-kinds p ["DATUM"])) " datum(s)"))))
+      n)))
+
 ;; ---- the model: which representations are shown -------------------------------------------
 ; Procedural (Part 55) representations first, then CSG, then explicit B-rep; when a file carries
 ; several kinds, the most parametric is shown and the console says what was left out.
@@ -897,10 +1254,10 @@
 
 (define (shape-reps records)
   (filter records (fn (r) (and (is-any r REPRESENTATIONS) (not (is r "VARIATIONAL_REPRESENTATION"))))))
-(define (items rep) (attr (first (filter (partials rep) (fn (p) (> (len p) 3)))) 1))
+(define (items rep) (rep-items rep))
 (define (item-kind i)
   (if (is i "PROCEDURAL_REPRESENTATION_SEQUENCE") "procedural"
-    (if (or (is-any i CSG_ITEMS) (any (partials i) (fn (p) (starts_with (kw p) "SOLID_WITH_")))) "csg"
+    (if (or (is-any i CSG_ITEMS) (and (is_record i) (any (partials i) (fn (p) (starts_with (kw p) "SOLID_WITH_"))))) "csg"
       (if (is-any i BREPS) "brep" "other"))))
 (define (unique-items xs (seen []) (i 0))
   (if (>= i (len xs)) []
@@ -908,7 +1265,7 @@
       (if (any seen (fn (s) (== s (rid x))))
         (unique-items xs seen (+ i 1))
         (concat [x] (unique-items xs (concat seen [(rid x)]) (+ i 1)))))))
-(define (units-of rep) (context-units (attr (first (filter (partials rep) (fn (p) (> (len p) 3)))) 2)))
+(define (units-of rep) (rep-units rep))
 
 ; The kinds of record the model is built from; one pass picks them out of the whole file.
 (define RELEVANT (concat REPRESENTATIONS ["FREE_FORM_ASSIGNMENT" "EQUAL_PARAMETER_CONSTRAINT"
@@ -918,22 +1275,27 @@
   (let ((records (filter all (fn (r) (if (complex? r) (any (kinds r) (fn (k) (contains RELEVANT k)))
                                            (contains RELEVANT (kw r))))))
         (ov (overrides records))
-        (st (styles records))
         (reps (shape-reps records))
         (pairs (apply concat (for ((rep reps)) (for ((i (items rep))) [rep i]))))
         (kinds ["procedural" "csg" "brep"])
         (chosen (first (filter kinds (fn (k) (any pairs (fn (p) (== (item-kind (get p 1)) k)))))))
         (skipped (filter kinds (fn (k) (and (!= k chosen) (any pairs (fn (p) (== (item-kind (get p 1)) k))))))))
     (if (is_undef chosen)
-      (fail "the file has no shape GCAD can show: no procedural, CSG or B-rep representation")
+      (if (> (pmi all) 0)
+        (info "the file has no shape GCAD can show (no procedural, CSG or B-rep representation); "
+              "its PMI is shown alone")
+        (fail "the file has no shape GCAD can show: no procedural, CSG or B-rep representation"))
       (let ((shown (filter pairs (fn (p) (== (item-kind (get p 1)) chosen))))
             (seq-elements (apply concat (for ((p shown)) (if (is (get p 1) "PROCEDURAL_REPRESENTATION_SEQUENCE")
                                                          (for ((e (seq-elements (get p 1)))) (rid e)) []))))
             (tops (filter shown (fn (p) (not (any seq-elements (fn (s) (== s (rid (get p 1)))))))))
             (unique (unique-items (for ((p tops)) (get p 1))))
+            ; colours of whole solids; an explicit B-rep's are OpenCASCADE's to read
+            (st (if (== chosen "brep") [] (styles records)))
             (ctx-for (fn (i) (let ((p (first (filter tops (fn (q) (== (rid (get q 1)) (rid i))))))
                                    (u (units-of (first p))))
                                [(first u) (get u 1) ov st]))))
+        (if (< (pmi all) 0) undef)  ; the annotations; the value (their count) is not geometry
         (if (> (len skipped) 0)
           (info "also in the file, not shown: the " (apply str (for ((k skipped)) (str k " ")))
                 "representation; the " chosen " one is shown"))

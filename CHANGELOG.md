@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+**PMI viewing (M15, proposed; SPEC FR-I9).** A STEP AP242 file's graphical PMI (tessellated and polyline callouts) is drawn on the model and its semantic PMI listed in a new annotation panel: geometric tolerances of every kind with their datum systems and modifiers, dimensions with values, ± tolerances, limits, basic and statistical notes, datums, datum features and targets, each linked to its callout and to the faces it applies to; saved views filter the annotations and turn the camera. Faces of an imported B-rep keep the `#n` of the `ADVANCED_FACE` they came from, so clicking one opens its line. The reading is the kernel's prelude (data); checked against NIST's expected PMI for the two bundled NIST test files, CTC-01 and CTC-05. In the browser the B-rep is left out and the PMI shown. New for every kernel: `annotate` (annotations beside the graph, outside its hash), `position`, `positions` and a native `filter`, and `time_limit` in `kernel.toml`; `gcad eval --dump annotations`. `gcad kernel check` passes an example whose model builds even if its semantic checker reports conformance errors, and prints their count. Fixed in the M14 kernel: representations whose first partial record is `CHARACTERIZED_OBJECT` (common in AP242 PMI files) lost their items; styles are read only for CSG models.
+
 ## 0.2.0a1
 
 A pre-release of v0.2 (2026-10-28): the web studio, process kernels, ISO 10303 parametric exchange and two kernels for formats that are not CAD languages. M9 to M13 of the v0.2 plan are still to come; the wheel is on GitHub Releases, not on PyPI.

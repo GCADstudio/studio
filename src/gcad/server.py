@@ -31,10 +31,10 @@ from typing import Any
 import numpy as np
 
 from gcad import GENERATOR, __version__
-from gcad.backends import available_backends, get_backend, select_backend
+from gcad.backends import available_backends, select_backend
 from gcad.core.evaluator import Limits
 from gcad.core.sexpr import to_text
-from gcad.diagnostics import Diagnostic, GcadError
+from gcad.diagnostics import Diagnostic, GcadError, Severity
 from gcad.exporters import FORMATS, ExportJob, GraphOnly, export
 from gcad.kernels import BUNDLED, Kernel, discover, is_trusted, kernel_for, trust
 from gcad.pipeline import evaluate_source
@@ -229,7 +229,8 @@ class Studio:
                 result["gcore"] = "\n".join(to_text(f) for f in evaluated.forms)
             if evaluated.result.ok and graph is not None:
                 try:
-                    result.update(self._preview(graph))
+                    result.update(self._preview(graph, evaluated.result.records, file, diagnostics))
+                    result["annotations"] = [a.to_json(file) for a in evaluated.result.annotations]
                     result["ok"] = True
                     result["hash"] = graph.hash()[:16]
                 except GcadError as exc:
@@ -238,8 +239,21 @@ class Studio:
         result["ms"] = round((time.perf_counter() - started) * 1000, 1)
         return result
 
-    def _preview(self, graph: Any) -> dict[str, object]:
-        model = get_backend("manifold").realize(graph)
+    def _preview(
+        self,
+        graph: Any,
+        records: dict[str, Any] | None = None,
+        file: str | None = None,
+        diagnostics: list[Diagnostic] | None = None,
+    ) -> dict[str, object]:
+        # Without OpenCASCADE (the browser) an imported B-rep is left out with a warning, so
+        # the rest of the model and its annotations still show.
+        from gcad.backends.manifold_backend import ManifoldBackend
+
+        model = ManifoldBackend().realize(graph, skip_imports=diagnostics is not None)
+        for skipped in model.skipped:
+            if diagnostics is not None:
+                diagnostics.append(replace(skipped.diagnostic, severity=Severity.WARNING))
         if not model.is_valid():
             raise GcadError("the mesh back-end produced an invalid model")
         bounds = model.bounds()
@@ -259,16 +273,27 @@ class Studio:
                 "positions": _b64(mesh.vertices, "<f4"),
                 "indices": _b64(mesh.triangles, "<u4"),
                 "triGroup": _b64(mesh.tri_group, "<u4"),
-                "groups": [
-                    {"color": list(g.color) if g.color else None, "spans": spans.get(g.node_id, [])}
-                    for g in mesh.groups
-                ],
+                "groups": [self._group(g, spans, records or {}, file) for g in mesh.groups],
                 "triangles": mesh.triangle_count,
                 "volume": model.volume(),
                 "area": model.area(),
             }
         )
         return info
+
+    @staticmethod
+    def _group(g: Any, spans: Any, records: dict[str, Any], file: str | None) -> dict[str, object]:
+        """A mesh group for the page: its colour, and where it was written. A face a back-end
+        labelled with its source entity points at that entity's record (FR-U7)."""
+        out: dict[str, object] = {"color": list(g.color) if g.color else None}
+        if g.entity is not None:
+            out["entity"] = g.entity
+            where = records.get(g.entity)
+            if where is not None:
+                out["spans"] = [where.to_json()]
+                return out
+        out["spans"] = spans.get(g.node_id, [])
+        return out
 
     def rpc_export_formats(self) -> list[dict[str, object]]:
         status = available_backends()

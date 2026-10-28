@@ -15,6 +15,7 @@ what was and was not decided.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass
@@ -199,6 +200,20 @@ def _name(f: object, have_ap: bool) -> str:
     return "the ISO 10303 resource parts"
 
 
+#: the last few checks, by file name and SHA-256 of the text: the studio evaluates a file again
+#: on every run, and a PMI file of a few thousand instances takes seconds to check
+_CACHE: dict[tuple[str, str], list[Diagnostic]] = {}
+_CACHE_SIZE = 8
+
+
 def check(source: str, file: str) -> list[Diagnostic]:
     """The kernel's checker (kernel.toml `checker = "iso10303-21"`)."""
-    return report(source, file).diagnostics
+    # a schema added or fetched since (the web studio's upload) must be checked against
+    folder = schemas.schema_dir()
+    known = sorted(f.name for f in folder.glob("*.json")) if folder.is_dir() else []
+    key = (file, hashlib.sha256((source + "\0" + " ".join(known)).encode("utf-8")).hexdigest())
+    if key not in _CACHE:
+        while len(_CACHE) >= _CACHE_SIZE:
+            _CACHE.pop(next(iter(_CACHE)))
+        _CACHE[key] = report(source, file).diagnostics
+    return list(_CACHE[key])

@@ -49,6 +49,7 @@ Pre-alpha, version 0.2.0a1, a pre-release: milestones M0 to M8 and M14 of [the p
 | `gcad` command line, headless |
 | The web studio: the same UI and Python core in the browser (Pyodide), a static site for GitHub Pages; no STEP or IGES there |
 | Kernel `iso10303` (`.stp`, `.step`, `.p21`, proposed M14): STEP files with ISO 10303-42 CSG, -55 histories, -108 parameters, -111 holes and pockets, -112 sketches; explicit B-rep through OpenCASCADE; checked against the AP242 long form with every rule evaluated. Export `step-parametric` writes models back as parametric STEP. [Coverage, entity by entity](docs/design/iso10303-coverage.tsv) |
+| PMI in STEP AP242 (proposed M15): graphical PMI drawn, semantic PMI (tolerances, dimensions, datums) listed with the faces it applies to, saved views; in the studio and the browser |
 
 Run `gcad formats` to see every format and which back-ends are available.
 
@@ -64,6 +65,12 @@ gcad iso check part.stp                           # header, schema and rules, wi
 ```
 
 The design, the grammar's trace to the standard and what is verified how are in [docs/design/iso10303-kernel.md](docs/design/iso10303-kernel.md).
+
+### PMI, GD&T and MBD
+
+A STEP AP242 file's annotations open with it (proposed M15): the callouts are drawn on the model, and the panel beside the viewer lists the saved views, the geometric tolerances, dimensions and datums. Each row has a check box for its drawing, opens its `#n` line in the editor and lights up the faces it applies to; clicking a face of the part marks the rows that apply to it. In the browser the part's B-rep is left out (it needs OpenCASCADE) and the PMI is still shown. Two of NIST's PMI test files are bundled as examples (`Ctrl+O`, type `nist`). `gcad eval part.stp --dump annotations` lists the same in a terminal.
+
+![The CTC-01 test part with its PMI in the studio](docs/studio-pmi.png)
 
 ## Install
 
@@ -193,3 +200,5 @@ The front end's JavaScript (three.js, CodeMirror) is vendored in `src/gcad/web/v
 ## Licence
 
 AGPL-3.0, see [LICENSE](LICENSE).
+
+The examples `nist_ctc_01_asme1_ap242-e1.stp` and `nist_ctc_05_asme1_ap242-e1.stp` are test files of the [NIST MBE PMI Validation and Conformance Testing](https://www.nist.gov/ctl/smart-connected-systems-division/smart-connected-manufacturing-systems-group/mbe-pmi-0) project, by the National Institute of Standards and Technology, which may be used without restrictions; they are unchanged.

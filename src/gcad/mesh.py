@@ -15,6 +15,9 @@ class MeshGroup:
 
     node_id: str
     color: RGBA | None
+    #: the source entity the triangles came from, when a back-end knows it: the `#n` of an
+    #: imported STEP face. Lets the studio point a face back at its line (FR-U7).
+    entity: str | None = None
 
 
 @dataclass

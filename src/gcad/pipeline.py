@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from gcad.backends import select_backend
@@ -39,6 +39,9 @@ def evaluate_source(
     except GcadError as exc:
         return Evaluated(kernel, [], EvalResult(None, [exc.diagnostic]))
     metadata = {"title": Path(file).stem, "source": Path(file).name, "kernel": kernel.id}
+    limits = limits or Limits()
+    if kernel.time_limit > limits.max_seconds:  # a kernel of large data files (kernel.toml)
+        limits = replace(limits, max_seconds=kernel.time_limit)
     result = evaluate(forms, limits, metadata, prelude, source, trace)
     try:
         result.diagnostics.extend(kernel.check(source, file))
