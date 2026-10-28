@@ -23,16 +23,16 @@
 (define (member xs v) (> (count xs (fn (x) (== x v))) 0))
 (define (take xs n) (for ((i (range 0 (- n 1)))) (get xs i)))
 ; C arrays: unset entries read as 0
-(define (at xs i) (let ((v (get xs i))) (if (is_undef v) 0 v)))
+(define (item xs i) (let ((v (get xs i))) (if (is_undef v) 0 v)))
 (define (or-default v d) (if (is_undef v) d v))
 (define (put xs i v) (for ((k (range 0 (max (- (len xs) 1) i)))) (if (== k i) v (get xs k))))
-(define (pad xs n) (for ((i (range 0 (- n 1)))) (at xs i)))
+(define (pad xs n) (for ((i (range 0 (- n 1)))) (item xs i)))
 (define (insert-sorted xs v)
   (if (member xs v) xs
     (concat (keep xs (fn (x) (< x v))) [v] (keep xs (fn (x) (> x v))))))
 (define (distinct-from xs i acc) (if (>= i (len xs)) acc (distinct-from xs (+ i 1) (insert-sorted acc (get xs i)))))
 ; Sorted distinct values of a list of rows, one row at a time, so the recursion stays as deep
-; as a row is long (at most 99 subcells) rather than as the whole grid.
+; as a row is long (item most 99 subcells) rather than as the whole grid.
 (define (distinct-rows rows i acc) (if (>= i (len rows)) acc (distinct-rows rows (+ i 1) (distinct-from (get rows i) 0 acc))))
 (define (distinct rows) (distinct-rows rows 0 []))
 (define (non-decreasing xs) (== (count (range 1 (- (len xs) 1)) (fn (i) (< (get xs i) (get xs (- i 1))))) 0))
@@ -181,7 +181,7 @@
         (if (has-matc x)
           (let ((res (resolve-from x 0 [] m))) (resolve-from xs (+ i 1) (concat acc [(get res 0)]) (get res 1)))
           (resolve-from xs (+ i 1) (concat acc [x]) m))))))
-(define (resolve x m) (if (has-matc x) (resolve-from x 0 [] m) [x m]))
+(define (resolve-matc x m) (if (has-matc x) (resolve-from x 0 [] m) [x m]))
 
 ; --- the two passes, line by line ------------------------------------------------------------
 
@@ -196,7 +196,7 @@
   (if (>= i (len recs)) [out m]
     (let ((r (get recs i))
           (m1 (if (and (== pass 1) (== (tag r) "matc")) [(get m 0) (arg r 0) (get m 2)] m))
-          (res (resolve r m1))
+          (res (resolve-matc r m1))
           (r2 (get res 0))
           (m2 (get res 1)))
       (if pending
@@ -230,20 +230,20 @@
 (define (write-limits r g slot n vs)
   (let ((xs (pad vs (+ n 1)))
         (ok (check r (non-decreasing xs) "the limits must not decrease (ElmerGrid stops: values for limits should be a growing series)")))
-    (put g slot (concat xs (for ((k (range (+ n 1) (- (len (get g slot)) 1)))) (at (get g slot) k))))))
+    (put g slot (concat xs (for ((k (range (+ n 1) (- (len (get g slot)) 1)))) (item (get g slot) k))))))
 ; Subcell Sizes / Extruded Sizes: limits are the running sum from the first limit.
 (define (write-sizes r g slot n vs)
   (let ((sizes (pad vs n))
         (ok (check r (== (count sizes (fn (s) (< s 0))) 0) "negative sizes are not supported")))
-    (put g slot (sums sizes 0 [(at (get g slot) 0)]))))
+    (put g slot (sums sizes 0 [(item (get g slot) 0)]))))
 (define (sums sizes i acc) (if (>= i (len sizes)) acc (sums sizes (+ i 1) (concat acc [(+ (get acc i) (get sizes i))]))))
 
 (define (origin-shift g d v)
   (let ((xs (coords g d)) (n (cells g d)))
-    (if (== v "center") (* 0.5 (+ (at xs 0) (at xs n)))
-      (if (or (== v "left") (and (== v "min") (== d 1))) (at xs 0)
-        (if (or (== v "right") (and (== v "max") (== d 1))) (at xs n)
-          (if (is_string v) 0 (at v 0)))))))
+    (if (== v "center") (* 0.5 (+ (item xs 0) (item xs n)))
+      (if (or (== v "left") (and (== v "min") (== d 1))) (item xs 0)
+        (if (or (== v "right") (and (== v "max") (== d 1))) (item xs n)
+          (if (is_string v) 0 (item v 0)))))))
 
 (define (read-rows r rows n width what)
   (let ((ok (check r (>= (len rows) n) (str what " needs " n " rows, one per subcell; with fewer, ElmerGrid reads the lines after it (End, the next keywords) as rows"))))
@@ -267,7 +267,7 @@
       (let ((d (set-dir r (arg r 0)))) (write-sizes r g (coords-slot d) (cells g d) (arg r 1)))
     (if (== t "origin")
       (let ((d (set-dir r (arg r 0))) (shift (origin-shift g d (arg r 1))))
-        (put g (coords-slot d) (for ((k (range 0 (cells g d)))) (- (at (coords g d) k) shift))))
+        (put g (coords-slot d) (for ((k (range 0 (cells g d)))) (- (item (coords g d) k) shift))))
     (if (== t "structure")
       ; The first row of the matrix is the top row of cells (largest y), as ElmerGrid reads it.
       (let ((yc (get g YC)) (xc (get g XC))
@@ -316,7 +316,7 @@
 (define (relabel g m) (relabel-from (get g BULK) 0 m m))
 
 (define (in-grid g m) (and (>= m (get g FIRST)) (<= m (get g LAST))))
-(define (cell g i j) (at (get (get g STRUCT) (- j 1)) (- i 1)))
+(define (cell g i j) (item (get (get g STRUCT) (- j 1)) (- i 1)))
 
 ; The material layer k of an extruded grid gives 2D material m, or undef when it drops it.
 (define (layer-material g k m)
@@ -326,7 +326,7 @@
           (to (or-default (get (get g ZMAT) (- k 1)) 0)))
       (if (and (>= m lo) (<= m hi)) (if (!= to 0) to m) undef))
     (if (or (< m 1) (> m (get g MAXMAT))) undef
-      (let ((to (at (get (get g ZMAP) (- k 1)) (- m 1)))) (if (> to 0) to undef)))))
+      (let ((to (item (get (get g ZMAP) (- k 1)) (- m 1)))) (if (> to 0) to undef)))))
 
 (define PALETTE ["#4e79a7" "#f28e2b" "#e15759" "#76b7b2" "#59a14f" "#edc948" "#b07aa1" "#ff9da7" "#9c755f" "#bab0ac"])
 (define (material-color m) (if (>= m 1) (get PALETTE (% (- m 1) 10)) "#808080"))
@@ -335,8 +335,8 @@
 (define (cells-of g m)
   (let ((X (get g XS)) (Y (get g YS)) (mk (get (get g MAKERS) 0)))
     (for ((j (range 1 (get g YC))) (i (range 1 (get g XC)))
-          (c (let ((w (- (at X i) (at X (- i 1)))) (h (- (at Y j) (at Y (- j 1)))))
-               (if (and (== (cell g i j) m) (> w 0) (> h 0)) [(mk (at X (- i 1)) (at Y (- j 1)) w h)] []))))
+          (c (let ((w (- (item X i) (item X (- i 1)))) (h (- (item Y j) (item Y (- j 1)))))
+               (if (and (== (cell g i j) m) (> w 0) (> h 0)) [(mk (item X (- i 1)) (item Y (- j 1)) w h)] []))))
       c)))
 
 (define (finish g fail)
@@ -360,7 +360,7 @@
             ; Each layer of an extruded grid is the 2D map extruded straight up, with the
             ; layer's own material renumbering (Extruded Structure or Extruded Material Mappings).
             (let ((Z (get g ZS))
-                  (layers (keep (range 1 (get g ZC)) (fn (k) (> (at Z k) (at Z (- k 1))))))
+                  (layers (keep (range 1 (get g ZC)) (fn (k) (> (item Z k) (item Z (- k 1))))))
                   (by-layer (for ((k layers))
                               (for ((i mats)
                                     (p (let ((to (layer-material g k (get found i))))
@@ -372,7 +372,7 @@
                   (union (for ((p pairs)
                                (s (if (== (get p 2) f)
                                     (let ((k (get p 0)))
-                                      [(extrude (at Z (- k 1)) (- (at Z k) (at Z (- k 1))) (get regions (get p 1)))])
+                                      [(extrude (item Z (- k 1)) (- (item Z k) (item Z (- k 1))) (get regions (get p 1)))])
                                     []))) s)))))))
         (some (fail (> (len shapes) 0) "no cells to build: Materials Interval keeps no material of the grid")))
     shapes))
