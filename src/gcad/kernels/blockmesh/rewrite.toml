@@ -1,0 +1,107 @@
+# blockMeshDict -> GCore. Placeholders: $n child n, $n* its children spliced, $* all children,
+# $n:str / $n:sym source text as a string or a symbol. See docs/kernel-authoring.md.
+#
+# Names the kernel adds start with "/": an OpenFOAM word cannot contain "/", so they never
+# collide with the user's keywords. The prelude defines them, including aliases of the GCore
+# built-ins (/assert, /name, ...), because a dictionary may well define a keyword such as
+# "scale" or "str". A check that fails is an assert written here, in the template, so the error
+# points at the user's line rather than at the prelude.
+
+[rules]
+# Every entry first, then the solid: blocks may come before the edges that curve them.
+start = "$* (let ((/r (/build /vertices /edges /blocks [/scale /convertToMeters /units]))) (if (/ok /r) /r (/assert 0 /r)))"
+
+# ---------- vertices: each is [name-or-undef (x y z)] in OpenFOAM's units ----------
+vertices = "(define /vertices [$*])"
+vertex = "$1"
+plain_vertex = "(let ((/v (/vertex /none $1))) (if (/ok /v) /v (/assert 0 /v)))"
+named_vertex = "(let ((/v (/vertex $1:str $2))) (if (/ok /v) /v (/assert 0 /v)))"
+projected_vertex = '(/assert 0 "projected vertices (project) are not supported: blockMesh moves them onto a geometry surface")'
+computed_vertices = '(/assert 0 "vertices made by a macro or a #directive are not supported: list them")'
+
+# ---------- blocks: [zones names builder]; /build calls the builder once edges are known ----------
+blocks = "(define /blocks [$*])"
+block = "$1"
+hex = "[[$2:str] [] (fn (/m /i /label /rgba) (let ((/b (/block /m /i $1))) (if (/ok /b) (/name /label (/color /rgba (/polyhedron (/get /b 0) (/get /b 1)))) (/assert 0 /b))))]"
+named_block = "(/named-block $1:str $2)"
+# Cell counts and grading decide how blockMesh divides a block into cells, not the solid.
+density = ""
+computed_blocks = '(/assert 0 "blocks made by a macro or a #directive are not supported: list them")'
+
+# ---------- edges: each is a function of the vertex list, returning an edge record ----------
+edges = "(define /edges [$*])"
+edge = "$1"
+arc = "(fn (/V) (let ((/e (/arc3 /V $1 $2 $3))) (if (/ok /e) /e (/assert 0 /e))))"
+arc_origin = "(fn (/V) (let ((/e (/arc-origin /V $1 $2 [$3] $4))) (if (/ok /e) /e (/assert 0 /e))))"
+arc_angle = "(fn (/V) (let ((/e (/arc-angle /V $1 $2 $3 $4))) (if (/ok /e) /e (/assert 0 /e))))"
+polyline = "(fn (/V) (let ((/e (/polyline /V $1 $2 $3))) (if (/ok /e) /e (/assert 0 /e))))"
+line = "(fn (/V) (let ((/e (/line /V $1 $2))) (if (/ok /e) /e (/assert 0 /e))))"
+projected_edge = '(/assert 0 "projected edges (project) are not supported: blockMesh moves them onto a geometry surface")'
+other_edge = '(/assert 0 (/str $1:str " edges are not supported; the edges read are arc, polyLine and line"))'
+computed_edges = '(/assert 0 "edges made by a macro or a #directive are not supported: list them")'
+
+no_faces = ""
+curved_faces = '(/assert 0 "curved faces (faces ... project) are not supported: blockMesh moves them onto a geometry surface")'
+
+# ---------- units: OpenFOAM lengths are metres times one of these ----------
+scale = "(define scale $1) (define /scale scale)"
+convert_to_meters = "(define convertToMeters $1) (define /convertToMeters convertToMeters)"
+units = "(define /units (let ((/u (/unit $1:str))) (if (/ok /u) /u (/assert 0 /u))))"
+other_units = '(/assert 0 "this form of units is not supported; write units [m], [cm], [mm], [um] or [km]")'
+
+# Read but left out, because they do not change the solid: the FoamFile header; boundary,
+# patches and defaultPatch, which only name the faces of the mesh; mergePatchPairs, which
+# stitches patches that touch (the union of the blocks already joins them); and geometry,
+# which only matters to projections, and those are reported where they are used.
+ignored = ""
+transform = '(/assert 0 "transform is not supported: it moves every vertex")'
+
+# ---------- the dictionary layer: entries are defines, $macros are references ----------
+define = "(define $1:sym (/entry $2))"
+define_dict = "(define $1:sym $2)"
+values = "[$*]"
+list = "[$*]"
+dimensions = "[$*]"
+# A sub-dictionary is a list of [key value] pairs. Each entry is bound with let around the
+# ones after it, so $key inside the dictionary finds the nearest definition, as in OpenFOAM.
+dict = "$1"
+dict_end = "[]"
+pair = "(let (($1:sym (/entry $2))) (/cons [$1:str $1:sym] $3))"
+pair_dict = "(let (($1:sym $2)) (/cons [$1:str $1:sym] $3))"
+dict_statement = "(/seq $1 $2)"
+dict_merge = "(/concat $1 $2)"
+macro = "$1"
+root_macro = "$1"
+path_root = "$1:sym"
+path_step = "(let ((/x (/lookup $1 $2:str))) (if (/ok /x) /x (/assert 0 /x)))"
+other_macro = '(/assert 0 "$: and $../file macros are not supported")'
+neg_macro = "(/neg $1)"
+neg_directive = "(/neg $1)"
+
+# Values computed by code. They are kept as a marker, so a dictionary that computes only cell
+# counts still works; using one where geometry needs a number is an error at that place.
+calc = '(/unsupported "#calc")'
+eval = '(/unsupported "#eval")'
+code_stream = '(/unsupported "#codeStream")'
+inline_eval = '(/unsupported "${...}")'
+
+# #directives that stand on their own
+code_stream_entries = '(/assert 0 "#codeStream is not supported: GCAD Studio does not run the C++ code it holds")'
+include = '(/assert 0 "#include is not supported: the included file is not read")'
+input_mode = '(/assert 0 "#inputMode is not supported")'
+conditional = '(/assert 0 "#if, #ifeq, #else and #endif are not supported")'
+other_directive = '(/assert 0 (/str $1:str " is not supported"))'
+# #remove drops entries once they are no longer needed, and #message prints: neither changes
+# the solid.
+remove = ""
+message = ""
+
+[tokens]
+NUMBER = "number"
+WORD = "text"
+STRING = "text"
+VERBATIM = "text"
+EVAL_BRACE = "text"
+INLINE_EVAL = "text"
+FILE_MACRO = "text"
+DIRECTIVE = "text"

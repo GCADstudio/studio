@@ -199,6 +199,76 @@ jobs:
           path: libreoffice-output
           if-no-files-found: ignore
 
+  # The blockmesh kernel against OpenFOAM's own blockMesh, from the Ubuntu archive. It reruns
+  # the kernel's examples live and sweeps the tutorials of the same OpenFOAM version; the
+  # numbers it prints for the examples are the golden values in tests/test_blockmesh_kernel.py.
+  blockmesh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install OpenFOAM from the Ubuntu archive
+        run: |
+          echo "set man-db/auto-update false" | sudo debconf-set-selections
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 openfoam
+          dpkg -s openfoam | grep -E '^(Package|Version|Source):'
+      - name: Find blockMesh and the tutorials
+        run: |
+          bashrc=$(find /usr/lib/openfoam /usr/share/openfoam /opt -path '*/etc/bashrc' 2>/dev/null | head -n 1 || true)
+          echo "OpenFOAM bashrc: ${bashrc:-none}"
+          wrapper="$RUNNER_TEMP/foam"
+          {
+            echo '#!/bin/bash'
+            if [ -n "$bashrc" ]; then echo "source '$bashrc' > /dev/null 2>&1 || true"; fi
+            echo 'exec "$@"'
+          } > "$wrapper"
+          chmod +x "$wrapper"
+          "$wrapper" bash -c 'command -v blockMesh && echo "WM_PROJECT_VERSION=$WM_PROJECT_VERSION"'
+          echo "GCAD_BLOCKMESH=$wrapper blockMesh" >> "$GITHUB_ENV"
+          echo "GCAD_CHECKMESH=$wrapper checkMesh" >> "$GITHUB_ENV"
+          # 1912.200626-2build3 -> 1912.200626, the upstream release and patch date
+          version=$(dpkg -s openfoam | sed -n 's/^Version: \([0-9.]*\).*/\1/p')
+          found=$(find /usr/share/openfoam /usr/lib/openfoam /usr/share/doc/openfoam* -path '*/tutorials/*' -name blockMeshDict 2>/dev/null | head -n 1 || true)
+          if [ -n "$found" ]; then
+            tutorials="${found%%/tutorials/*}/tutorials"
+          else
+            # The package ships no tutorials: take them from the same release, read-only.
+            for tag in "OpenFOAM-v$version" "OpenFOAM-v${version%%.*}"; do
+              if git clone --depth 1 --filter=blob:none --no-checkout --branch "$tag" \
+                  https://gitlab.com/openfoam/core/openfoam.git "$RUNNER_TEMP/openfoam"; then
+                echo "tutorials from tag $tag"
+                break
+              fi
+            done
+            git -C "$RUNNER_TEMP/openfoam" sparse-checkout set --no-cone '/tutorials/**/blockMeshDict*'
+            git -C "$RUNNER_TEMP/openfoam" checkout
+            tutorials="$RUNNER_TEMP/openfoam/tutorials"
+          fi
+          count=$(find "$tutorials" -name 'blockMeshDict*' | wc -l)
+          echo "tutorials: $tutorials ($count dictionaries)"
+          if [ "$count" -eq 0 ]; then echo "no blockMeshDict under $tutorials"; exit 1; fi
+          echo "GCAD_FOAM_TUTORIALS=$tutorials" >> "$GITHUB_ENV"
+      - run: python -m pip install -e ".[dev]"
+      - name: The oracle's numbers for the kernel's examples
+        run: python tests/blockmesh_oracle.py | tee blockmesh-oracle.jsonl
+      - run: pytest -q -rs tests/test_blockmesh_kernel.py
+        env:
+          GCAD_REQUIRE_BLOCKMESH: "1"
+          GCAD_BLOCKMESH_REPORT: blockmesh-corpus.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blockmesh-oracle
+          path: |
+            blockmesh-oracle.jsonl
+            blockmesh-corpus.json
+          if-no-files-found: ignore
+
   # The bundled process kernels need their own programs: OpenSCAD, and CadQuery in an
   # environment of its own (it pins cadquery-ocp below 8). AC-13, AC-14.
   process-kernels:

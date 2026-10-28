@@ -256,7 +256,8 @@ function newFile(kernelId) {
     csg: "; A new csg model\n(difference\n  (box [30 20 8])\n  (translate [15 10 -1] (cylinder :h 10 :d 6)))\n",
     parts: "# A new parts list\npart base: box 30 20 8\ncut  hole: cylinder d 6 h 10 at 15 10 -1\n",
   };
-  setFile({ path: null, name: `untitled${kernel.extensions[0]}`, kernel: kernelId, readOnly: false });
+  const name = kernel.extensions.length ? `untitled${kernel.extensions[0]}` : kernel.filenames[0];
+  setFile({ path: null, name, kernel: kernelId, readOnly: false });
   editor.load(starters[kernelId] || "", kernel);
   setDirty(true);
   state.fitNext = true;
@@ -394,8 +395,10 @@ function downloadFile() {
 
 function uploadFile() {
   const input = $("#upload-input");
-  // .exp: an EXPRESS schema, kept to check ISO 10303 files against (SPEC FR-I4)
-  input.accept = [...[...state.kernels.values()].flatMap((k) => k.extensions), ".exp"].join(",");
+  // .exp: an EXPRESS schema, kept to check ISO 10303 files against (SPEC FR-I4).
+  // `accept` can list extensions but not file names, so a kernel that claims names lifts the filter.
+  const kernels = [...state.kernels.values()];
+  input.accept = kernels.some((k) => k.filenames?.length) ? "" : [...kernels.flatMap((k) => k.extensions), ".exp"].join(",");
   input.value = ""; // choosing the same file again still counts as a change
   input.click();
 }

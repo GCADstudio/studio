@@ -1,0 +1,68 @@
+/*--------------------------------*- C++ -*----------------------------------*\
+  An L-shaped duct: three blocks that share vertices, in two cell zones.
+  Coordinates in millimetres (convertToMeters 0.001), sizes set once as macros.
+  Written for GCAD Studio's blockmesh kernel; any OpenFOAM blockMesh reads it.
+\*---------------------------------------------------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+
+convertToMeters 0.001;
+
+width   20;     // width of each arm
+length  60;     // overall length of each arm
+depth   10;
+
+vertices
+(
+    (0       0       0)         // 0
+    ($width  0       0)         // 1
+    ($length 0       0)         // 2
+    (0       $width  0)         // 3
+    ($width  $width  0)         // 4
+    ($length $width  0)         // 5
+    (0       $length 0)         // 6
+    ($width  $length 0)         // 7
+
+    (0       0       $depth)    // 8
+    ($width  0       $depth)    // 9
+    ($length 0       $depth)    // 10
+    (0       $width  $depth)    // 11
+    ($width  $width  $depth)    // 12
+    ($length $width  $depth)    // 13
+    (0       $length $depth)    // 14
+    ($width  $length $depth)    // 15
+);
+
+blocks
+(
+    hex (0 1 4 3 8 9 12 11)   corner (4 4 2)  simpleGrading (1 1 1)
+    hex (1 2 5 4 9 10 13 12)  arms   (8 4 2)  simpleGrading (2 1 1)
+    hex (3 4 7 6 11 12 15 14) arms   (4 8 2)  simpleGrading (1 2 1)
+);
+
+edges
+(
+);
+
+boundary
+(
+    inlet
+    {
+        type patch;
+        faces ((2 5 13 10));
+    }
+    outlet
+    {
+        type patch;
+        faces ((6 14 15 7));
+    }
+);
+
+mergePatchPairs
+(
+);
