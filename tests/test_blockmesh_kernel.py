@@ -492,6 +492,16 @@ def test_named_vertices_and_blocks() -> None:
     assert name == "core" and len(points) == 8
 
 
+def test_keyword_lists_may_leave_out_their_semicolon() -> None:
+    """blockMesh reads `boundary ( ... )` without the ";", as two v1912 tutorials write it."""
+    text = box().replace(
+        "boundary ();", "boundary\n(\n    walls { type wall; faces ((0 4 7 3)); }\n)\n"
+    )
+    text += "mergePatchPairs\n(\n)\n"
+    assert graph(text).hash() == graph(box()).hash()
+    assert graph(box().replace("));\nblocks", "))\nblocks")).hash() == graph(box()).hash()
+
+
 def test_mesh_only_entries_change_nothing() -> None:
     plain = graph(box()).hash()
     meshy = box(

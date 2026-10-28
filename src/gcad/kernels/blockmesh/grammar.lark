@@ -22,8 +22,9 @@ top_code: "#codeStream" dict                     -> code_stream_entries
 
 // ---------- what blockMesh builds the solid from ----------
 
-// Each of vertices, blocks and edges may instead come from a macro or a #directive.
-vertices: "vertices" "(" vertex* ")" ";"
+// Each of vertices, blocks and edges may instead come from a macro or a #directive. blockMesh
+// also reads these keyword lists without their closing ";", as some tutorials write them.
+vertices: "vertices" "(" vertex* ")" ";"?
         | "vertices" (ref | value_directive) ";" -> computed_vertices
 vertex: point                                    -> plain_vertex
       | "name" WORD point                        -> named_vertex
@@ -32,7 +33,7 @@ vertex: point                                    -> plain_vertex
       | statement
 ?point: list | ref
 
-blocks: "blocks" "(" block* ")" ";"
+blocks: "blocks" "(" block* ")" ";"?
       | "blocks" (ref | value_directive) ";"     -> computed_blocks
 // hex (vertex labels) [zone] (cells) [simpleGrading | edgeGrading] (grading); the cell counts
 // may also be three bare numbers, the grading keyword a macro, and one macro may stand for
@@ -46,7 +47,7 @@ _grading: [WORD] grading | ref grading
 density: list | ref | NUMBER NUMBER NUMBER
 ?grading: list | ref
 
-edges: "edges" "(" edge* ")" ";"
+edges: "edges" "(" edge* ")" ";"?
      | "edges" (ref | value_directive) ";"       -> computed_edges
 edge: "arc" label label point                    -> arc
     | "arc" label label "origin" [NUMBER] point  -> arc_origin
@@ -59,8 +60,8 @@ edge: "arc" label label point                    -> arc
 ?label: NUMBER | WORD | ref
 ?scalar: NUMBER | ref | negated
 
-faces: "faces" "(" ")" ";"                       -> no_faces
-     | "faces" "(" ("project" | value)+ ")" ";"  -> curved_faces
+faces: "faces" "(" ")" ";"?                      -> no_faces
+     | "faces" "(" ("project" | value)+ ")" ";"? -> curved_faces
      | "faces" (ref | value_directive) ";"       -> curved_faces
 
 scale: "scale" value ";"                         -> scale
@@ -70,10 +71,10 @@ units: "units" "[" WORD "]" ";"
 
 // Read and parsed, but they do not change the solid: see rewrite.toml.
 ignored: "FoamFile" dict
-       | "boundary" value ";"
-       | "patches" value ";"
+       | "boundary" value ";"?
+       | "patches" value ";"?
        | "defaultPatch" dict
-       | "mergePatchPairs" value ";"
+       | "mergePatchPairs" value ";"?
        | "geometry" dict
 
 rejected: "transform" dict                       -> transform
