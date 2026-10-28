@@ -162,6 +162,12 @@ def build(out: Path, cache: Path) -> None:
     for name, data in npm_files(fetch(mf["url"], mf["sha256"], cache), mf["files"]).items():
         (out / "manifold" / name).write_bytes(data)
 
+    oc = assets["occt"]
+    print(f"occt-import-js {oc['version']}")
+    (out / "occt").mkdir()
+    for name, data in npm_files(fetch(oc["url"], oc["sha256"], cache), oc["files"]).items():
+        (out / "occt" / Path(name).name).write_bytes(data)
+
     (out / "wheels").mkdir()
     wheels: list[str] = []
     for wheel in assets["wheels"]:
@@ -186,6 +192,8 @@ def build(out: Path, cache: Path) -> None:
             for name in packages
         ),
         f"- manifold-3d {mf['version']} ({mf['license']}): {mf['source']}; see manifold/LICENSE",
+        f"- occt-import-js {oc['version']} with OpenCASCADE ({oc['license']}): {oc['source']}; "
+        "see occt/license.occt-import-js.txt and occt/license.occt.txt",
         *(f"- {w['name']} {w['version']} ({w['license']})" for w in assets["wheels"]),
         "- three.js and CodeMirror (MIT): see vendor/",
         "",

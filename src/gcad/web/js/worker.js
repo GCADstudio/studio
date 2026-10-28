@@ -9,6 +9,30 @@ const ROOT = "/home/pyodide/studio"; // user files, backed by IndexedDB
 const status = (text) => postMessage({ type: "status", text });
 let pyodide = null;
 let handle = null;
+let occt = null;
+
+// OpenCASCADE's WebAssembly build (occt-import-js, 7.6 MB): fetched the first time a STEP file
+// is evaluated, then kept. Its script defines a global factory, so it is evaluated, not
+// imported. Python reaches it as the JS module `_gcad_occt` (gcad/backends/occt_js.py).
+async function ensureOcct() {
+  if (occt) return occt;
+  occt = (async () => {
+    status("Loading OpenCASCADE");
+    const base = new URL("occt/", site);
+    const code = await (await fetch(new URL("occt-import-js.js", base))).text();
+    const factory = new Function(`${code}\nreturn occtimportjs;`)();
+    const module = await factory({ locateFile: (path) => new URL(path, base).href });
+    pyodide.registerJsModule("_gcad_occt", module);
+    return module;
+  })();
+  try {
+    return await occt;
+  } catch (error) {
+    occt = null; // try again next time; meanwhile STEP B-rep is left out with a warning
+    status(`OpenCASCADE could not be loaded (${error})`);
+    return null;
+  }
+}
 
 function syncfs(populate) {
   return new Promise((resolve) => pyodide.FS.syncfs(populate, (error) => {
@@ -49,6 +73,7 @@ onmessage = async ({ data }) => {
   }
   let response;
   let fatal = false;
+  if (data.kernel === "iso10303") await ensureOcct();
   try {
     response = handle(data.request);
     if (data.method === "file/save") await syncfs(false);

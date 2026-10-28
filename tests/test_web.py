@@ -187,10 +187,13 @@ def test_every_example_matches_the_native_mesh_backend(page: object, native: Stu
         assert web["hash"] == ref["hash"], example["name"]
         assert web.get("annotations") == ref.get("annotations"), example["name"]
         if any(g.get("entity") for g in ref.get("groups", [])):
-            # explicit B-rep: OpenCASCADE reads it natively; the browser has none, leaves it out
-            # with a warning and still shows the file's PMI (AC-30)
-            assert web["triangles"] == 0 and web["annotations"], example["name"]
-            assert any("OpenCASCADE" in d["message"] for d in web["diagnostics"])
+            # explicit B-rep: read by OpenCASCADE natively and by its WebAssembly build here,
+            # which meshes it a little differently: the same solid, the same labelled faces
+            assert web["triangles"] > 0, example["name"]
+            assert web["volume"] == pytest.approx(ref["volume"], rel=1e-4), example["name"]
+            assert np.allclose(web["bounds"], ref["bounds"], rtol=1e-6, atol=1e-6), example["name"]
+            faces = {g["entity"]: g["spans"] for g in web["groups"]}
+            assert faces == {g["entity"]: g["spans"] for g in ref["groups"]}, example["name"]
             continue
         assert np.allclose(web["bounds"], ref["bounds"], rtol=1e-6, atol=1e-6), example["name"]
         assert web["area"] == pytest.approx(ref["area"], rel=1e-6), example["name"]

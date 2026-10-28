@@ -62,7 +62,8 @@ export class WorkerTransport {
     if (!this.active.ready || this.running || !this.queue.length) return;
     const job = (this.running = this.queue.shift());
     const request = JSON.stringify({ jsonrpc: "2.0", id: job.id, method: job.method, params: job.params });
-    this.active.worker.postMessage({ type: "request", id: job.id, method: job.method, request });
+    // The kernel tells the worker what to load first (OpenCASCADE for STEP files).
+    this.active.worker.postMessage({ type: "request", id: job.id, method: job.method, kernel: job.params?.kernel, request });
   }
 
   supersede(job) {
