@@ -1,0 +1,4 @@
+# ISO 10303-21 files are byte-exact writer output: never convert their line endings.
+*.stp -text
+*.step -text
+*.p21 -text

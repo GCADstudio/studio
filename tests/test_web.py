@@ -268,10 +268,18 @@ def read_mesh(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 def test_every_format_exports_or_says_why(page: object, native: Studio, tmp_path: Path) -> None:
     formats = rpc(page, "export/formats")
-    assert len(formats) == 14
+    assert len(formats) == 15
     for fmt in formats:
         if fmt["id"] in ("step", "iges"):
             assert "no WebAssembly build" in fmt["reason"], fmt
+            continue
+        if fmt["needs"] == "graph":  # parametric STEP: from the graph, no back-end (SPEC FR-I7)
+            assert fmt["reason"] == "", fmt
+            args = {"kernel": "minscad", "source": BRACKET.read_text(), "file": BRACKET.name}
+            options = {"epoch": 1792800000}
+            web = rpc(page, "export/run", format=fmt["id"], options=options, **args)
+            ref = native.rpc_export_run(format=fmt["id"], options=options, **args)  # type: ignore[arg-type]
+            assert web["backend"] == "none" and web["data"] == ref["data"]
             continue
         assert fmt["reason"] == "", fmt
         src = PLATE if fmt["needs"] == "2d" else BRACKET
@@ -383,6 +391,29 @@ def test_light_theme_palette_and_export_dialog(page: object) -> None:
     shot(page, "web-export-light")
     page.keyboard.press("Escape")  # type: ignore[attr-defined]
     assert page.errors == []  # type: ignore[attr-defined]
+
+
+def test_step_files_are_parsed_and_checked_in_the_browser(page: object) -> None:
+    """SPEC AC-21, FR-I4 in web mode: the iso10303 kernel parses there, and once an EXPRESS
+    schema is uploaded, checks files against it with every rule evaluated."""
+    from gcad.iso10303 import schemas
+
+    part = Path(__file__).parents[1] / "src/gcad/kernels/iso10303/examples/test_part.stp"
+    args = {"kernel": "iso10303", "source": part.read_text(), "file": part.name}
+    result = rpc(page, "document/evaluate", **args)
+    assert result["ok"]
+    messages = [d["message"] for d in result["diagnostics"]]
+    assert any(m.startswith("not checked against EXPRESS: no schema") for m in messages)
+    cached = schemas.schema_dir() / "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF.json"
+    if not cached.is_file():
+        pytest.skip("no AP242 long form to upload (gcad iso schema fetch AP242)")
+    saved = rpc(page, "file/save", path="ap242.schema.json", text=cached.read_text())
+    assert saved["schemas"] == ["AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF"]
+    result = rpc(page, "document/evaluate", **args)
+    messages = [d["message"] for d in result["diagnostics"]]
+    # how many rules apply depends on the schemas in the cache; all of them are decided
+    counts = [m for m in messages if m.startswith("rules: ")]
+    assert re.fullmatch(r"rules: \d{3} evaluated, 1 violated, 0 not evaluated", counts[-1])
 
 
 def test_uploaded_file_is_kept_in_the_browser(page: object, tmp_path: Path) -> None:

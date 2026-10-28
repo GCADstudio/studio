@@ -1,0 +1,15 @@
+(* SPDX-License-Identifier: LGPL-2.1-or-later
+
+   The one declaration ISO 10303-42 to -112 refer to that none of the parts in the reference set declares.
+
+   ISO 10303-108 Technical Corrigendum 1 removes non_negative_length_measure from Part 108 because it "has
+   been moved to ISO 10303-41", but ISO 10303-41:2005 (the third edition, in the reference set) does not
+   declare it yet; later editions of Part 41 do. It is declared here as Part 108:2005 declared it. Every
+   other declaration comes from the parts themselves (tools/iso10303_dictionary.py). *)
+
+SCHEMA measure_schema;
+TYPE non_negative_length_measure = length_measure;
+WHERE
+  WR1: SELF >= 0.0;
+END_TYPE;
+END_SCHEMA;

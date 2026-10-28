@@ -1,0 +1,33 @@
+# ISO 10303-21 -> GCore. Every instance becomes a letrec binding whose value is a record
+#   (record "#12" "KEYWORD" parameter...)
+# that remembers where it was written; a complex instance is a record of partial records,
+# a typed parameter a record without a name. prelude.gcore turns the records into geometry.
+
+[rules]
+start = "$1"
+exchange_file = "(step-model [$1*] (letrec ($2)))"
+header_section = "$*"
+header_entity = '(record "" $1:str $2*)'
+data = "$*"
+data_section = "$2*"
+section_parameters = ""
+instances = "$*"
+simple_instance = "($1 (record $1:str $2))"
+complex_instance = '($1 (record $1:str "+" $2))'
+simple_record = "$1:str $2*"
+subsuper_record = "$*"
+partial_record = '(record "" $1:str $2*)'
+parameter_list = "$*"
+typed_parameter = '(record "" $1:str $2)'
+unset = "undef"
+omitted = '(record "" "*")'
+list = "[$*]"
+
+[tokens]
+KEYWORD = "text"
+INSTANCE = "symbol"
+REAL = "number"
+INTEGER = "number"
+ENUMERATION = "text"
+STRING = "string:iso10303-21"
+BINARY = "text"

@@ -67,6 +67,8 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# freecad-nxstyle's ISO 10303 stack, kept as it is upstream (src/gcad/iso10303/_nxstyle/__init__.py)
+extend-exclude = ["src/gcad/iso10303/_nxstyle"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
@@ -76,6 +78,11 @@ python_version = "3.11"
 files = ["src/gcad"]
 warn_unused_ignores = true
 disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["gcad.iso10303._nxstyle", "gcad.iso10303._nxstyle.*"]
+ignore_errors = true
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = ["manifold3d", "manifold3d.*", "OCP", "OCP.*"]
