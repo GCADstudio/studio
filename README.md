@@ -1,6 +1,6 @@
 # GCAD Studio
 
-A language-agnostic, code-first CAD studio: what Jupyter did for IPython, GCAD Studio aims to do for OpenSCAD. A **kernel** is a modelling language defined by a formal grammar and rewrite rules; the studio parses it into one shared functional core language (GCore), evaluates it to a neutral geometry graph, renders it, and exports it to neutral and vendor formats. The idea comes from [openscad/openscad#2299](https://github.com/openscad/openscad/issues/2299); the full requirements are in [docs/SPEC.md](docs/SPEC.md).
+A language-agnostic, code-first CAD studio: what Jupyter did for IPython, GCAD Studio aims to do for OpenSCAD. A **kernel** is a modelling language defined by a formal grammar and rewrite rules; the studio parses it into one shared functional core language (GCore), evaluates it to a neutral geometry graph, renders it, and exports it to neutral and vendor formats. The idea comes from [openscad/openscad#2299](https://github.com/openscad/openscad/issues/2299); the full requirements are in [docs/SPEC.md](docs/SPEC.md). Today the Jupyter part is the architecture; notebooks come in M10 ([Questions](#questions)).
 
 ![GCAD Studio: the minscad bracket example, source on the left, the model on the right](docs/studio-dark.png)
 
@@ -29,6 +29,20 @@ The same studio also runs as a static web site, live at **[gcadstudio.github.io/
 python tools/build_site.py --out site    # fetches the pinned, checksummed Pyodide and Manifold once
 python -m http.server -d site 8000       # then open http://127.0.0.1:8000
 ```
+
+## Questions
+
+**Where is the Jupyter part?** In the architecture, so far. Jupyter split one front end from many kernels that speak a protocol; here a kernel is either a grammar with rewrite rules, or a program that speaks JSON-RPC over stdio, and every kernel's output becomes the same language-neutral geometry graph. The viewer and the exporters are written once against that graph, so a new language gets them without writing any of them. The workflow Jupyter is known for, a document of Markdown and code cells, run cell by cell, sharing one scene, each cell with its own view and measurements, is milestone [M10](docs/SPEC.md#122-v02-approved-2026-10-27), together with a `gcad` kernel for JupyterLab. It is not built yet: today the studio shows one file and one model.
+
+**How is that different from an editor that re-runs OpenSCAD?** For the `openscad` process kernel it is not very different yet: it runs your OpenSCAD and shows the mesh it makes. The difference is in the grammar kernels. GCAD Studio parses those languages itself, so it knows which code made which face (click a face to find it), shows errors where they are, and builds a graph you can compare and export: the `minscad` and `csg` versions of the tour's part give the same graph hash, and both export to exact STEP, which OpenSCAD cannot write.
+
+**Can I get a real B-rep STEP for CNC, with fillets and chamfers?** Partly. `minscad`, `csg` and `parts` export STEP from OpenCASCADE as an exact B-rep: cylinders stay cylinders and booleans are exact, not meshes. Fillets and chamfers are not GCore operations yet, and are not planned for v0.2. Today, for those, use the `cadquery` kernel: CadQuery fillets and chamfers on OpenCASCADE, and its STEP stays exact through GCAD Studio. A BOSL2 model opened with the `openscad` kernel is OpenSCAD's mesh, so STEP is not offered for it. If you want fillets and chamfers in the core, say so in an issue; it helps decide what comes after v0.2.
+
+**Which Python does the `cadquery` kernel use?** The one `GCAD_CADQUERY_PYTHON` points to, never GCAD Studio's own: CadQuery 2.8 pins `cadquery-ocp` below 8.0 and GCAD Studio needs 8.0.1 or newer, so they cannot share an environment. Install third-party packages into that environment (`uv pip install --python cq <package>`); the script's own folder is on `sys.path`, so modules next to it import too. A `cq.Assembly` comes back as one compound.
+
+**I already have VS Code and Copilot. Why switch?** You don't have to. The studio is optional: `gcad eval` and `gcad export` work from any editor or terminal, and errors come out as `file:line:col: error: ...`, a form editors already know how to parse. `gcad eval --dump graph` prints the model as JSON, which a script or an assistant can check. What GCAD Studio adds is what an editor does not have: one core under many languages, exact STEP from OpenSCAD-style code, and byte-reproducible exports. Not there yet: the studio does not pick up a file saved by another editor, and there is no language server.
+
+**Assemblies? A component-oriented editor?** Not in v0.2: `parts` is a flat parts list and a CadQuery assembly becomes one compound. Ideas for how assemblies, specifications and measurements should look, as cells or otherwise, are welcome as [issues](https://github.com/GCADstudio/studio/issues).
 
 ## Status
 
